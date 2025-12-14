@@ -1,8 +1,10 @@
 ---
-name: atlassian
-description: Access Jira issues and Confluence pages via Python scripts with OAuth 2.0 authentication. Use when user asks about Jira tickets, issues, bugs, stories, epics, sprints, or Confluence pages, wiki, documentation. Outputs compact YAML to save tokens. Requires one-time OAuth setup. (plugin:maratai-manager@maratai)
+description: Access Jira issues and Confluence pages via Python scripts with OAuth
+  2.0 authentication. Use when user asks about Jira tickets, issues, bugs, stories,
+  epics, sprints, or Confluence pages, wiki, documentation. Outputs compact YAML to
+  save tokens. Requires one-time OAuth setup. (plugin:maratai-manager@maratai)
+alwaysApply: false
 ---
-
 # Atlassian Skill
 
 Access Jira and Confluence content via Python scripts. All output is YAML format for minimal token usage.
@@ -14,7 +16,7 @@ Access Jira and Confluence content via Python scripts. All output is YAML format
 No prerequisites required - pure Python implementation.
 
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py login
+uv run --directory .cursor/rules/atlassian scripts/auth.py login
 ```
 
 This opens your browser for Atlassian OAuth consent. No need to create an OAuth app - uses Atlassian's official MCP authentication with automatic client registration.
@@ -23,14 +25,14 @@ This opens your browser for Atlassian OAuth consent. No need to create an OAuth 
 
 ### Fetch a ticket
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py get PROJ-123
+uv run --directory .cursor/rules/atlassian scripts/jira.py get PROJ-123
 ```
 
 Output includes: key, id, type, status, summary, description, author, assignee, parent, comments, attachments.
 
 ### Search with JQL
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py search "project=DEMO AND status='In Progress'"
+uv run --directory .cursor/rules/atlassian scripts/jira.py search "project=DEMO AND status='In Progress'"
 ```
 
 Common JQL examples:
@@ -41,26 +43,26 @@ Common JQL examples:
 
 ### Get comments
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py comments PROJ-123
+uv run --directory .cursor/rules/atlassian scripts/jira.py comments PROJ-123
 ```
 
 ### List projects
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py projects
+uv run --directory .cursor/rules/atlassian scripts/jira.py projects
 ```
 
 ## Confluence Commands
 
 ### Fetch a page
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py get 123456789
+uv run --directory .cursor/rules/atlassian scripts/confluence.py get 123456789
 ```
 
 Output includes: id, title, space, content, author, ancestors, updated.
 
 ### Search with CQL
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py search "type=page AND space=TEAM"
+uv run --directory .cursor/rules/atlassian scripts/confluence.py search "type=page AND space=TEAM"
 ```
 
 Common CQL examples:
@@ -71,24 +73,24 @@ Common CQL examples:
 
 ### Get child pages
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py children 123456789
+uv run --directory .cursor/rules/atlassian scripts/confluence.py children 123456789
 ```
 
 ### List spaces
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py spaces
+uv run --directory .cursor/rules/atlassian scripts/confluence.py spaces
 ```
 
 ### Get parent pages (ancestors)
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py ancestors 123456789
+uv run --directory .cursor/rules/atlassian scripts/confluence.py ancestors 123456789
 ```
 
 ## Authentication Status
 
 Check if authenticated:
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py status
+uv run --directory .cursor/rules/atlassian scripts/auth.py status
 ```
 
 ## Example Output

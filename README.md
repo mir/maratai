@@ -3,8 +3,8 @@ maratai
 
 Reusable prompts, command templates, and helper scripts that keep Marat's
 multi-agent coding assistants in sync. The repository centralizes the
-instructions used by Claude Code and OpenCode so they can be edited once and
-re-used across tools.
+instructions used by Claude Code, OpenCode, and Cursor so they can be edited
+once and re-used across tools.
 
 Repository Layout
 -----------------
@@ -16,9 +16,11 @@ Repository Layout
 - `opencode/` – OpenCode-compatible copies of the same prompts (folder names are
   singular: `agent/` and `command/`); also contains `opencode.json` with local
   MCP and formatter settings.
+- `.cursor/rules/` – Cursor rules generated from Claude Code skills. Can be
+  imported into any project via Cursor's Remote Rule feature.
 - `transfer_from_claude.py` – utility that copies Markdown from
-  `claude-maratai-dev/` and `claude-maratai-manager/` to `opencode/`, transforming
-  Claude Code frontmatter to OpenCode format and cleaning up orphaned files.
+  `claude-maratai-dev/` and `claude-maratai-manager/` to `opencode/` and
+  `.cursor/rules/`, transforming frontmatter for each platform.
 - `sync_opencode.sh` – helper script that syncs the local prompts into
   OpenCode's configuration directory (`~/.config/opencode/`), including orphan
   cleanup.
@@ -94,10 +96,46 @@ Skill Reference (maratai-manager)
   compact YAML output to save tokens. See `skills/atlassian/references/SETUP.md`
   for OAuth configuration.
 
+Claude Code Plugins
+-------------------
+To install the Claude Code plugins:
+
+1. Add the marketplace (one-time setup):
+   ```bash
+   claude mcp add-json maratai '{"type":"url","url":"https://raw.githubusercontent.com/mir/maratai/main/.claude-plugin/marketplace.json"}'
+   ```
+
+2. Install the plugins:
+   ```bash
+   claude plugin install maratai-dev@maratai    # Development workflows
+   claude plugin install maratai-manager@maratai # Management workflows (Atlassian)
+   ```
+
+3. Verify installation:
+   ```bash
+   claude plugin list
+   ```
+
+Cursor Rules
+------------
+Cursor users can import rules from this repository:
+
+1. Open **Cursor Settings → Rules**
+2. Click **+ Add Rule** next to Project Rules
+3. Select **Remote Rule (Github)**
+4. Enter the repository URL: `https://github.com/mir/maratai`
+
+Available rules:
+- **`atlassian`** – Jira and Confluence access via Python scripts
+
+Rules auto-sync when the source repository is updated.
+
 Troubleshooting
 ---------------
 - The transfer script transforms Claude Code frontmatter to OpenCode format
-  (removes `name`, `model`, `tools` fields; adds `mode: subagent` for agents).
+  (removes `name`, `model`, `tools` fields; adds `mode: subagent` for agents)
+  and Cursor format (removes `name`, adds `alwaysApply: false`, transforms
+  script paths from `${CLAUDE_PLUGIN_ROOT}` to `.cursor/rules/`).
 - When new dependencies are needed for the Python script, update the inline
   `uv` metadata block inside `transfer_from_claude.py`.
 - Keep an eye on trailing commas in JSON files such as
