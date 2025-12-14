@@ -1,0 +1,8 @@
+{
+  "name": "maratai-manager",
+  "version": "1.0.0",
+  "description": "Management workflow automation with Atlassian integration (Jira & Confluence) via OAuth 2.0 and weekly reporting tools.",
+  "author": {
+    "name": "marat.yuldashev"
+  }
+}

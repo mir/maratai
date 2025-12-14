@@ -1,0 +1,14 @@
+{
+  "name": "maratai-dev",
+  "version": "1.0.0",
+  "description": "AI-powered development workflow automation with specialized agents for project search, code review, specification creation, and web research. Includes smart commit commands and feature preparation tools.",
+  "author": {
+    "name": "marat.yuldashev"
+  },
+  "mcpServers": {
+    "deepwiki": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://mcp.deepwiki.com/sse"]
+    }
+  }
+}

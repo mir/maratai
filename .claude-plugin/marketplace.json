@@ -5,9 +5,14 @@
   },
   "plugins": [
     {
-      "name": "maratai",
-      "source": "./claude_maratai",
+      "name": "maratai-dev",
+      "source": "./claude-maratai-dev",
       "description": "AI-powered development workflow automation with specialized agents for project search, code review, specification creation, and web research"
+    },
+    {
+      "name": "maratai-manager",
+      "source": "./claude-maratai-manager",
+      "description": "Management workflow automation with Atlassian integration (Jira & Confluence) and weekly reporting tools"
     }
   ]
 }
