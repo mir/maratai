@@ -309,7 +309,7 @@ class AtlassianMCPClient:
             "capabilities": {},
             "clientInfo": {
                 "name": "atlassian-skill-python",
-                "version": "1.0.0",
+                "version": "1.1.0",
             },
         }
         result = self._send_request("initialize", params)
