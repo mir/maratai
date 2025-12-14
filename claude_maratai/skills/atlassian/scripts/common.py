@@ -9,7 +9,7 @@
 """
 Shared utilities for Atlassian API scripts.
 Provides HTTP client with automatic token refresh and YAML output formatting.
-Supports both OAuth 2.0 (3LO) and Basic Auth (API token).
+Supports both OAuth (pure Python) and Basic Auth (API token).
 """
 
 import base64
@@ -20,6 +20,15 @@ from typing import Any
 import httpx
 import keyring
 import yaml
+
+# Import OAuth token handling
+from oauth import (
+    load_tokens,
+    save_tokens,
+    load_client_info,
+    AtlassianMCPOAuth,
+    OAuthError,
+)
 
 SERVICE_NAME = "atlassian-claude-skill"
 
@@ -45,7 +54,7 @@ class RateLimitError(AtlassianError):
 
 
 class ConfigurationError(AtlassianError):
-    """Missing configuration (client_id, client_secret, etc.)."""
+    """Missing configuration."""
     pass
 
 
@@ -95,64 +104,46 @@ def get_valid_token() -> str:
     Raises AuthenticationError if no valid token available.
     Only used for OAuth auth type.
     """
-    access_token = get_stored_value("access_token")
-    expires_at_str = get_stored_value("expires_at")
+    tokens = load_tokens()
+    if not tokens:
+        raise AuthenticationError(
+            "Not authenticated. Run: uv run scripts/auth.py login"
+        )
 
+    access_token = tokens.get("access_token")
     if not access_token:
-        raise AuthenticationError("Not authenticated. Run: uv run scripts/auth.py login")
+        raise AuthenticationError(
+            "No access token found. Run: uv run scripts/auth.py login"
+        )
 
-    expires_at = float(expires_at_str) if expires_at_str else 0
+    expires_at = tokens.get("expires_at", 0)
 
-    # Refresh if expiring within 5 minutes
+    # Check if token is expired or expiring within 5 minutes
     if time.time() > expires_at - 300:
-        refresh_token = get_stored_value("refresh_token")
+        # Try to refresh
+        refresh_token = tokens.get("refresh_token")
         if not refresh_token:
-            raise AuthenticationError("No refresh token. Run: uv run scripts/auth.py login")
-
-        new_tokens = refresh_access_token(refresh_token)
-        return new_tokens["access_token"]
-
-    return access_token
-
-
-def refresh_access_token(refresh_token: str) -> dict:
-    """
-    Use refresh token to get new access/refresh token pair.
-    Updates stored tokens in Keychain.
-    """
-    client_id = get_stored_value("client_id")
-    client_secret = get_stored_value("client_secret")
-
-    if not client_id or not client_secret:
-        raise ConfigurationError(
-            "Missing OAuth credentials. Run: uv run scripts/auth.py setup"
-        )
-
-    with httpx.Client() as client:
-        response = client.post(
-            "https://auth.atlassian.com/oauth/token",
-            json={
-                "grant_type": "refresh_token",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-            },
-            headers={"Content-Type": "application/json"},
-        )
-
-        if response.status_code != 200:
             raise AuthenticationError(
-                f"Token refresh failed: {response.text}. Run: uv run scripts/auth.py login"
+                "Token expired and no refresh token. Run: uv run scripts/auth.py login"
             )
 
-        tokens = response.json()
+        client_info = load_client_info()
+        if not client_info:
+            raise AuthenticationError(
+                "No client info. Run: uv run scripts/auth.py login"
+            )
 
-        # Store new tokens (rotating refresh token)
-        set_stored_value("access_token", tokens["access_token"])
-        set_stored_value("refresh_token", tokens["refresh_token"])
-        set_stored_value("expires_at", str(time.time() + tokens["expires_in"]))
+        oauth = AtlassianMCPOAuth()
+        try:
+            new_tokens = oauth.refresh_tokens(refresh_token, client_info["client_id"])
+            save_tokens(new_tokens)
+            access_token = new_tokens["access_token"]
+        except OAuthError as e:
+            raise AuthenticationError(
+                f"Token refresh failed: {e}. Run: uv run scripts/auth.py login"
+            )
 
-        return tokens
+    return access_token
 
 
 def get_cloud_id() -> str:
@@ -184,8 +175,12 @@ class AtlassianClient:
         else:
             # OAuth uses cloud API URLs
             self.cloud_id = get_cloud_id()
-            self.jira_base = f"https://api.atlassian.com/ex/jira/{self.cloud_id}/rest/api/3"
-            self.confluence_base = f"https://api.atlassian.com/ex/confluence/{self.cloud_id}"
+            self.jira_base = (
+                f"https://api.atlassian.com/ex/jira/{self.cloud_id}/rest/api/3"
+            )
+            self.confluence_base = (
+                f"https://api.atlassian.com/ex/confluence/{self.cloud_id}"
+            )
 
     def _get_headers(self) -> dict:
         """Get authorization headers."""

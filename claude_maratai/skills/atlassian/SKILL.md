@@ -1,6 +1,6 @@
 ---
 name: atlassian
-description: Access Jira issues and Confluence pages via Python scripts with OAuth 2.0 authentication. Use when user asks about Jira tickets, issues, bugs, stories, epics, sprints, or Confluence pages, wiki, documentation. Outputs compact YAML to save tokens. Requires one-time OAuth setup.
+description: Access Jira issues and Confluence pages via Python scripts with OAuth 2.0 authentication. Use when user asks about Jira tickets, issues, bugs, stories, epics, sprints, or Confluence pages, wiki, documentation. Outputs compact YAML to save tokens. Requires one-time OAuth setup. (plugin:maratai@maratai)
 ---
 
 # Atlassian Skill
@@ -9,17 +9,31 @@ Access Jira and Confluence content via Python scripts. All output is YAML format
 
 ## Setup (First Time Only)
 
-### 1. Create OAuth App
-See [SETUP.md](references/SETUP.md) for creating an Atlassian OAuth app.
+### Option 1: OAuth Login (Recommended)
 
-### 2. Store Credentials
-```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py setup --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
-```
+No prerequisites required - pure Python implementation.
 
-### 3. Authenticate
 ```bash
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py login
+```
+
+This opens your browser for Atlassian OAuth consent. No need to create an OAuth app - uses Atlassian's official MCP authentication with automatic client registration.
+
+### Option 2: API Token
+
+Set environment variables:
+- `ATLASSIAN_EMAIL` - Your Atlassian account email
+- `ATLASSIAN_API_TOKEN` - API token from https://id.atlassian.com/manage-profile/security/api-tokens
+- `ATLASSIAN_SITE_URL` - Your site URL (e.g., `https://yoursite.atlassian.net`)
+
+Then run:
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py setup-token
+```
+
+Or pass directly:
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py setup-token --email you@example.com --token YOUR_TOKEN --site-url https://yoursite.atlassian.net
 ```
 
 ## Jira Commands
@@ -132,7 +146,8 @@ page:
 Run: `uv run --directory /path/to/skill scripts/auth.py login`
 
 ### "Token expired" error
-Tokens auto-refresh, but you can force: `uv run --directory /path/to/skill scripts/auth.py refresh`
+For OAuth: Run `auth.py login` again to re-authenticate.
+For API token: Tokens don't expire, check your credentials with `auth.py status`.
 
 ### "No cloud ID" error
 Re-authenticate: `uv run --directory /path/to/skill scripts/auth.py login`

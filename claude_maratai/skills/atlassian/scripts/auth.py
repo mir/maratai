@@ -8,86 +8,36 @@
 # requires-python = ">=3.12"
 # ///
 """
-Atlassian OAuth 2.0 (3LO) authentication script.
+Atlassian authentication script.
 
 Commands:
-    setup   - Store OAuth client credentials
-    login   - Start OAuth flow, open browser for consent
-    status  - Check authentication status
-    logout  - Clear stored tokens
-    refresh - Force token refresh
+    login       - Authenticate via OAuth (pure Python, no Node.js required)
+    setup-token - Setup using API token (env vars or arguments)
+    status      - Check authentication status
+    logout      - Clear stored tokens
 """
 
 import argparse
-import secrets
+import base64
+import os
 import sys
 import time
-import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 import keyring
 import yaml
 
+# Import OAuth client
+from oauth import (
+    AtlassianMCPOAuth,
+    OAuthError,
+    load_tokens,
+    save_tokens,
+    clear_tokens,
+    clear_all as clear_oauth_storage,
+)
+
 SERVICE_NAME = "atlassian-claude-skill"
-CALLBACK_PORT = 8765
-REDIRECT_URI = f"http://localhost:{CALLBACK_PORT}/callback"
-
-# OAuth scopes for Jira and Confluence read access
-SCOPES = [
-    "read:jira-work",
-    "read:jira-user",
-    "read:confluence-content.all",
-    "search:confluence",
-    "readonly:content.attachment:confluence",
-    "offline_access",  # Required for refresh tokens
-]
-
-
-class OAuthCallbackHandler(BaseHTTPRequestHandler):
-    """HTTP handler to capture OAuth callback."""
-
-    auth_code: str | None = None
-    state: str | None = None
-    error: str | None = None
-
-    def do_GET(self):
-        """Handle OAuth callback GET request."""
-        parsed = urlparse(self.path)
-
-        if parsed.path != "/callback":
-            self.send_response(404)
-            self.end_headers()
-            return
-
-        params = parse_qs(parsed.query)
-
-        if "error" in params:
-            OAuthCallbackHandler.error = params.get("error", ["Unknown error"])[0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(
-                b"<html><body><h1>Authentication Failed</h1>"
-                b"<p>You can close this window.</p></body></html>"
-            )
-            return
-
-        OAuthCallbackHandler.auth_code = params.get("code", [None])[0]
-        OAuthCallbackHandler.state = params.get("state", [None])[0]
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        self.wfile.write(
-            b"<html><body><h1>Authentication Successful!</h1>"
-            b"<p>You can close this window and return to the terminal.</p></body></html>"
-        )
-
-    def log_message(self, format, *args):
-        """Suppress HTTP server logs."""
-        pass
 
 
 def get_stored_value(key: str) -> str | None:
@@ -108,31 +58,119 @@ def delete_stored_value(key: str) -> None:
         pass
 
 
-def cmd_setup(args):
-    """Store OAuth client credentials."""
-    client_id = args.client_id
-    client_secret = args.client_secret
+def cmd_login(args):
+    """Authenticate via OAuth (pure Python, no Node.js required)."""
+    import json
+    from mcp_client import AtlassianMCPClient, MCPError
 
-    if not client_id or not client_secret:
+    try:
+        oauth = AtlassianMCPOAuth()
+        tokens = oauth.login()
+    except OAuthError as e:
         yaml.dump(
-            {
-                "error": "Client ID and Client Secret are required",
-                "usage": "uv run scripts/auth.py setup --client-id YOUR_ID --client-secret YOUR_SECRET",
-                "help": "Get credentials from https://developer.atlassian.com/console/myapps/",
-            },
+            {"error": str(e)},
             sys.stderr,
             default_flow_style=False,
         )
         sys.exit(1)
 
-    set_stored_value("client_id", client_id)
-    set_stored_value("client_secret", client_secret)
+    # Store auth type
+    set_stored_value("auth_type", "oauth")
+
+    # Fetch accessible resources via MCP
+    print("Fetching Atlassian cloud resources via MCP...")
+
+    try:
+        client = AtlassianMCPClient()
+        result = client.call_tool("getAccessibleAtlassianResources")
+        client.close()
+
+        # Parse result (it's a JSON string)
+        if isinstance(result, str):
+            resources = json.loads(result)
+        else:
+            resources = result
+
+    except MCPError as e:
+        yaml.dump(
+            {"error": f"Failed to fetch resources via MCP: {e}"},
+            sys.stderr,
+            default_flow_style=False,
+        )
+        sys.exit(1)
+
+    if not resources:
+        yaml.dump(
+            {"error": "No accessible Atlassian sites found"},
+            sys.stderr,
+            default_flow_style=False,
+        )
+        sys.exit(1)
+
+    # Deduplicate resources (MCP returns separate entries for Jira/Confluence scopes)
+    seen = {}
+    for r in resources:
+        cloud_id = r["id"]
+        if cloud_id not in seen:
+            seen[cloud_id] = r
+    resources = list(seen.values())
+
+    # Handle site selection
+    if len(resources) > 1:
+        if args.site:
+            selected = None
+            for r in resources:
+                if r["name"].lower() == args.site.lower() or r["url"] == args.site:
+                    selected = r
+                    break
+            if selected is None:
+                try:
+                    idx = int(args.site) - 1
+                    if 0 <= idx < len(resources):
+                        selected = resources[idx]
+                except ValueError:
+                    pass
+            if selected is None:
+                yaml.dump(
+                    {
+                        "error": f"Site '{args.site}' not found",
+                        "available_sites": [
+                            {"index": i + 1, "name": r["name"], "url": r["url"]}
+                            for i, r in enumerate(resources)
+                        ],
+                        "usage": "Use --site with site name, URL, or index number",
+                    },
+                    sys.stderr,
+                    default_flow_style=False,
+                )
+                sys.exit(1)
+        else:
+            yaml.dump(
+                {
+                    "info": "Multiple Atlassian sites found, using first one",
+                    "selected": {"name": resources[0]["name"], "url": resources[0]["url"]},
+                    "available_sites": [
+                        {"index": i + 1, "name": r["name"], "url": r["url"]}
+                        for i, r in enumerate(resources)
+                    ],
+                    "tip": "Use --site to select a different site",
+                },
+                sys.stdout,
+                default_flow_style=False,
+            )
+            selected = resources[0]
+    else:
+        selected = resources[0]
+
+    set_stored_value("cloud_id", selected["id"])
+    set_stored_value("site_name", selected["name"])
+    set_stored_value("site_url", selected["url"])
 
     yaml.dump(
         {
             "status": "success",
-            "message": "OAuth credentials stored in Keychain",
-            "next_step": "Run 'uv run scripts/auth.py login' to authenticate",
+            "site": {"name": selected["name"], "url": selected["url"]},
+            "message": "Authentication complete! You can now use Jira and Confluence scripts.",
         },
         sys.stdout,
         default_flow_style=False,
@@ -141,8 +179,6 @@ def cmd_setup(args):
 
 def cmd_setup_token(args):
     """Setup using API token from environment variables."""
-    import os
-
     email = args.email or os.environ.get("ATLASSIAN_EMAIL")
     api_token = args.token or os.environ.get("ATLASSIAN_API_TOKEN")
     site_url = args.site_url or os.environ.get("ATLASSIAN_SITE_URL")
@@ -175,14 +211,12 @@ def cmd_setup_token(args):
     # Normalize site URL
     site_url = site_url.rstrip("/")
 
-    # Verify credentials by fetching cloud ID
+    # Verify credentials by fetching user info
     print("Verifying credentials...")
 
-    import base64
     auth_string = base64.b64encode(f"{email}:{api_token}".encode()).decode()
 
     with httpx.Client() as client:
-        # Try to access the site to verify credentials
         response = client.get(
             f"{site_url}/rest/api/3/myself",
             headers={
@@ -213,7 +247,9 @@ def cmd_setup_token(args):
     set_stored_value("api_email", email)
     set_stored_value("api_token", api_token)
     set_stored_value("site_url", site_url)
-    set_stored_value("site_name", site_url.replace("https://", "").replace(".atlassian.net", ""))
+    set_stored_value(
+        "site_name", site_url.replace("https://", "").replace(".atlassian.net", "")
+    )
 
     yaml.dump(
         {
@@ -222,193 +258,6 @@ def cmd_setup_token(args):
             "site_url": site_url,
             "user": user_info.get("displayName", email),
             "message": "API token authentication configured. You can now use Jira and Confluence scripts.",
-        },
-        sys.stdout,
-        default_flow_style=False,
-    )
-
-
-def cmd_login(args):
-    """Start OAuth 2.0 3LO flow."""
-    client_id = get_stored_value("client_id")
-    client_secret = get_stored_value("client_secret")
-
-    if not client_id or not client_secret:
-        yaml.dump(
-            {
-                "error": "OAuth credentials not configured",
-                "fix": "Run 'uv run scripts/auth.py setup' first",
-            },
-            sys.stderr,
-            default_flow_style=False,
-        )
-        sys.exit(1)
-
-    # Generate random state for CSRF protection
-    state = secrets.token_urlsafe(32)
-
-    # Build authorization URL
-    auth_params = {
-        "client_id": client_id,
-        "scope": " ".join(SCOPES),
-        "redirect_uri": REDIRECT_URI,
-        "state": state,
-        "response_type": "code",
-        "prompt": "consent",
-        "audience": "api.atlassian.com",
-    }
-    auth_url = f"https://auth.atlassian.com/authorize?{urlencode(auth_params)}"
-
-    print("Starting OAuth authentication flow...")
-    print(f"Opening browser to Atlassian consent page...\n")
-
-    # Reset handler state
-    OAuthCallbackHandler.auth_code = None
-    OAuthCallbackHandler.state = None
-    OAuthCallbackHandler.error = None
-
-    # Start local server
-    server = HTTPServer(("localhost", CALLBACK_PORT), OAuthCallbackHandler)
-    server.timeout = 120  # 2 minute timeout
-
-    # Open browser
-    webbrowser.open(auth_url)
-    print(f"If browser doesn't open, visit:\n{auth_url}\n")
-    print("Waiting for authentication...")
-
-    # Wait for callback
-    while OAuthCallbackHandler.auth_code is None and OAuthCallbackHandler.error is None:
-        server.handle_request()
-
-    server.server_close()
-
-    if OAuthCallbackHandler.error:
-        yaml.dump(
-            {"error": f"OAuth failed: {OAuthCallbackHandler.error}"},
-            sys.stderr,
-            default_flow_style=False,
-        )
-        sys.exit(1)
-
-    # Verify state
-    if OAuthCallbackHandler.state != state:
-        yaml.dump(
-            {"error": "State mismatch - possible CSRF attack"},
-            sys.stderr,
-            default_flow_style=False,
-        )
-        sys.exit(1)
-
-    # Exchange code for tokens
-    print("Exchanging authorization code for tokens...")
-
-    with httpx.Client() as client:
-        response = client.post(
-            "https://auth.atlassian.com/oauth/token",
-            json={
-                "grant_type": "authorization_code",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "code": OAuthCallbackHandler.auth_code,
-                "redirect_uri": REDIRECT_URI,
-            },
-            headers={"Content-Type": "application/json"},
-        )
-
-        if response.status_code != 200:
-            yaml.dump(
-                {"error": f"Token exchange failed: {response.text}"},
-                sys.stderr,
-                default_flow_style=False,
-            )
-            sys.exit(1)
-
-        tokens = response.json()
-
-    # Store tokens
-    set_stored_value("access_token", tokens["access_token"])
-    set_stored_value("refresh_token", tokens["refresh_token"])
-    set_stored_value("expires_at", str(time.time() + tokens["expires_in"]))
-
-    # Fetch accessible resources to get cloud ID
-    print("Fetching Atlassian cloud resources...")
-
-    with httpx.Client() as client:
-        response = client.get(
-            "https://api.atlassian.com/oauth/token/accessible-resources",
-            headers={"Authorization": f"Bearer {tokens['access_token']}"},
-        )
-
-        if response.status_code != 200:
-            yaml.dump(
-                {"error": f"Failed to fetch resources: {response.text}"},
-                sys.stderr,
-                default_flow_style=False,
-            )
-            sys.exit(1)
-
-        resources = response.json()
-
-    if not resources:
-        yaml.dump(
-            {"error": "No accessible Atlassian sites found"},
-            sys.stderr,
-            default_flow_style=False,
-        )
-        sys.exit(1)
-
-    # If multiple sites, let user choose via --site argument or default to first
-    if len(resources) > 1:
-        if args.site:
-            # Find site by name or index
-            selected = None
-            for r in resources:
-                if r['name'].lower() == args.site.lower() or r['url'] == args.site:
-                    selected = r
-                    break
-            if selected is None:
-                try:
-                    idx = int(args.site) - 1
-                    if 0 <= idx < len(resources):
-                        selected = resources[idx]
-                except ValueError:
-                    pass
-            if selected is None:
-                yaml.dump(
-                    {
-                        "error": f"Site '{args.site}' not found",
-                        "available_sites": [{"index": i + 1, "name": r["name"], "url": r["url"]} for i, r in enumerate(resources)],
-                        "usage": "Use --site with site name, URL, or index number",
-                    },
-                    sys.stderr,
-                    default_flow_style=False,
-                )
-                sys.exit(1)
-        else:
-            # Show available sites and default to first
-            yaml.dump(
-                {
-                    "info": "Multiple Atlassian sites found, using first one",
-                    "selected": {"name": resources[0]["name"], "url": resources[0]["url"]},
-                    "available_sites": [{"index": i + 1, "name": r["name"], "url": r["url"]} for i, r in enumerate(resources)],
-                    "tip": "Use --site to select a different site",
-                },
-                sys.stdout,
-                default_flow_style=False,
-            )
-            selected = resources[0]
-    else:
-        selected = resources[0]
-
-    set_stored_value("cloud_id", selected["id"])
-    set_stored_value("site_name", selected["name"])
-    set_stored_value("site_url", selected["url"])
-
-    yaml.dump(
-        {
-            "status": "success",
-            "site": {"name": selected["name"], "url": selected["url"]},
-            "message": "Authentication complete! You can now use Jira and Confluence scripts.",
         },
         sys.stdout,
         default_flow_style=False,
@@ -430,7 +279,7 @@ def cmd_status(args):
             yaml.dump(
                 {
                     "authenticated": False,
-                    "message": "Not authenticated. Run 'uv run scripts/auth.py setup-token'",
+                    "message": "Not authenticated. Run 'auth.py login' or 'auth.py setup-token'",
                 },
                 sys.stdout,
                 default_flow_style=False,
@@ -449,27 +298,26 @@ def cmd_status(args):
             default_flow_style=False,
         )
     else:
-        # OAuth
-        access_token = get_stored_value("access_token")
-        expires_at_str = get_stored_value("expires_at")
+        # OAuth (pure Python)
+        tokens = load_tokens()
 
-        if not access_token:
+        if not tokens or "access_token" not in tokens:
             yaml.dump(
                 {
                     "authenticated": False,
-                    "message": "Not authenticated. Run 'uv run scripts/auth.py login'",
+                    "message": "Not authenticated. Run 'auth.py login' or 'auth.py setup-token'",
                 },
                 sys.stdout,
                 default_flow_style=False,
             )
             return
 
-        expires_at = float(expires_at_str) if expires_at_str else 0
+        expires_at = tokens.get("expires_at", 0)
         now = time.time()
         expires_in_seconds = int(expires_at - now)
 
         if expires_in_seconds <= 0:
-            status = "expired"
+            status = "expired (run 'auth.py login' to refresh)"
         elif expires_in_seconds < 300:
             status = "expiring_soon"
         else:
@@ -478,7 +326,7 @@ def cmd_status(args):
         yaml.dump(
             {
                 "authenticated": True,
-                "auth_type": "oauth",
+                "auth_type": "oauth (pure Python)",
                 "site": {"name": site_name, "url": site_url},
                 "token_status": status,
                 "expires_in_minutes": max(0, expires_in_seconds // 60),
@@ -503,10 +351,9 @@ def cmd_logout(args):
     for key in keys_to_delete:
         delete_stored_value(key)
 
-    # Optionally clear all credentials
+    # Clear OAuth storage
     if args.all:
-        delete_stored_value("client_id")
-        delete_stored_value("client_secret")
+        clear_oauth_storage()
         delete_stored_value("api_email")
         delete_stored_value("api_token")
         yaml.dump(
@@ -515,83 +362,31 @@ def cmd_logout(args):
             default_flow_style=False,
         )
     else:
+        clear_tokens()
         yaml.dump(
             {
                 "status": "success",
-                "message": "Tokens cleared. Credentials retained.",
-                "note": "Use --all to also remove OAuth/API token credentials",
+                "message": "Tokens cleared. API token credentials retained.",
+                "note": "Use --all to also remove API token credentials and OAuth client info",
             },
             sys.stdout,
             default_flow_style=False,
         )
 
 
-def cmd_refresh(args):
-    """Force token refresh."""
-    refresh_token = get_stored_value("refresh_token")
-
-    if not refresh_token:
-        yaml.dump(
-            {"error": "No refresh token. Run 'uv run scripts/auth.py login'"},
-            sys.stderr,
-            default_flow_style=False,
-        )
-        sys.exit(1)
-
-    client_id = get_stored_value("client_id")
-    client_secret = get_stored_value("client_secret")
-
-    with httpx.Client() as client:
-        response = client.post(
-            "https://auth.atlassian.com/oauth/token",
-            json={
-                "grant_type": "refresh_token",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-            },
-            headers={"Content-Type": "application/json"},
-        )
-
-        if response.status_code != 200:
-            yaml.dump(
-                {"error": f"Token refresh failed: {response.text}"},
-                sys.stderr,
-                default_flow_style=False,
-            )
-            sys.exit(1)
-
-        tokens = response.json()
-
-    set_stored_value("access_token", tokens["access_token"])
-    set_stored_value("refresh_token", tokens["refresh_token"])
-    set_stored_value("expires_at", str(time.time() + tokens["expires_in"]))
-
-    yaml.dump(
-        {
-            "status": "success",
-            "message": "Token refreshed",
-            "expires_in_minutes": tokens["expires_in"] // 60,
-        },
-        sys.stdout,
-        default_flow_style=False,
-    )
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Atlassian OAuth 2.0 authentication",
+        description="Atlassian authentication",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # setup command (OAuth)
-    setup_parser = subparsers.add_parser("setup", help="Store OAuth client credentials")
-    setup_parser.add_argument(
-        "--client-id", required=True, help="OAuth Client ID from Atlassian Developer Console"
+    # login command (OAuth - pure Python)
+    login_parser = subparsers.add_parser(
+        "login", help="Authenticate via OAuth (opens browser, pure Python)"
     )
-    setup_parser.add_argument(
-        "--client-secret", required=True, help="OAuth Client Secret from Atlassian Developer Console"
+    login_parser.add_argument(
+        "--site", help="Select site by name, URL, or index (if multiple sites available)"
     )
 
     # setup-token command (API token / Basic Auth)
@@ -605,13 +400,8 @@ def main():
         "--token", help="API token (or set ATLASSIAN_API_TOKEN env var)"
     )
     token_parser.add_argument(
-        "--site-url", help="Atlassian site URL e.g. https://yoursite.atlassian.net (or set ATLASSIAN_SITE_URL env var)"
-    )
-
-    # login command
-    login_parser = subparsers.add_parser("login", help="Start OAuth flow, open browser")
-    login_parser.add_argument(
-        "--site", help="Select site by name, URL, or index (if multiple sites available)"
+        "--site-url",
+        help="Atlassian site URL e.g. https://yoursite.atlassian.net (or set ATLASSIAN_SITE_URL env var)",
     )
 
     # status command
@@ -620,11 +410,8 @@ def main():
     # logout command
     logout_parser = subparsers.add_parser("logout", help="Clear stored tokens")
     logout_parser.add_argument(
-        "--all", action="store_true", help="Also remove OAuth client credentials"
+        "--all", action="store_true", help="Also remove API token credentials and OAuth client info"
     )
-
-    # refresh command
-    subparsers.add_parser("refresh", help="Force token refresh")
 
     args = parser.parse_args()
 
@@ -633,12 +420,10 @@ def main():
         sys.exit(1)
 
     commands = {
-        "setup": cmd_setup,
-        "setup-token": cmd_setup_token,
         "login": cmd_login,
+        "setup-token": cmd_setup_token,
         "status": cmd_status,
         "logout": cmd_logout,
-        "refresh": cmd_refresh,
     }
 
     commands[args.command](args)
