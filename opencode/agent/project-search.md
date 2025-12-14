@@ -1,8 +1,8 @@
 ---
-description: Search the current project for relevant files and components
+description: Search the current project for relevant files and components. Provide
+  the full description of user's idea.
 mode: subagent
 ---
-
 # Role
 You are in project search mode. Your task is just to find the relevant files.
 

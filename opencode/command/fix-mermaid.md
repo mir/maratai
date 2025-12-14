@@ -1,9 +1,7 @@
 ---
-description: Fix mermaid diagram syntax
-agent: build
+description: Fix the mermaid syntax in .md file
 ---
-
-Check that the following rules are satisfied and fix them otherwise for the file $ARGUMENTS
+Check that the following rules are satisfied and fix them otherwise for the file
 
 # Mermaid hints
 

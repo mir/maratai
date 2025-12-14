@@ -1,8 +1,6 @@
 ---
 description: Prepare minimal necessary documentation for a user defined feature
-agent: build
 ---
-
 # Task
 You are preparing documentation for a new feature implementation.
 

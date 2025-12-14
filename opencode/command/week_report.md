@@ -1,8 +1,6 @@
 ---
-description: Prepare weekly managment report
-agent: build
+description: Prepare weekly management report
 ---
-
 1. Prepare a report of the changes made last week in the following format:
 <report format>
 ## <project name>

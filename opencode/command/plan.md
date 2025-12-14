@@ -1,8 +1,6 @@
 ---
-description: Prepare minimal necessary documentation for a user defined feature
-agent: build
+description: Create implementation plan
 ---
-
 # Task
 - Ask user to point to the folder or files necessary to make a plan, such as:
   - Main idea

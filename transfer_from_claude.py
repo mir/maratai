@@ -1,29 +1,112 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# dependencies = []
+# dependencies = ["pyyaml"]
 # requires-python = ">=3.12"
 # ///
 
 """
-Transfer markdown files from claude-maratai-dev to opencode folders,
-removing the preamble (YAML frontmatter) from each file.
+Transfer markdown files from Claude Code plugin folders to OpenCode format,
+transforming frontmatter to OpenCode-compliant syntax.
+
+Source directories:
+- claude-maratai-dev/agents/ -> opencode/agent/
+- claude-maratai-dev/commands/ -> opencode/command/
+- claude-maratai-manager/commands/ -> opencode/command/
+
+Transformations:
+- Agents: Remove name/model/tools fields, add mode: subagent
+- Commands: Keep description field
 """
 
-import re
+import yaml
 from pathlib import Path
 
 
-def remove_preamble(content: str) -> str:
+def parse_frontmatter(content: str) -> tuple[dict, str]:
     """
-    Remove YAML frontmatter (preamble) from markdown content.
+    Parse YAML frontmatter from markdown content.
 
-    Preamble is defined as content between --- markers at the start of the file.
-    Returns the content after the closing --- marker.
+    Returns tuple of (metadata dict, body content).
+    If no frontmatter, returns empty dict and full content.
     """
-    # Match YAML frontmatter: --- at start, content, then ---
-    pattern = r'^---\s*\n.*?\n---\s*\n'
-    result = re.sub(pattern, '', content, flags=re.DOTALL)
-    return result
+    content = content.lstrip()
+    if not content.startswith('---'):
+        return {}, content
+
+    # Find the closing ---
+    lines = content.split('\n')
+    end_idx = None
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == '---':
+            end_idx = i
+            break
+
+    if end_idx is None:
+        return {}, content
+
+    # Parse YAML
+    yaml_content = '\n'.join(lines[1:end_idx])
+    try:
+        metadata = yaml.safe_load(yaml_content) or {}
+    except yaml.YAMLError:
+        metadata = {}
+
+    # Get body (skip the closing --- and any immediate newline)
+    body = '\n'.join(lines[end_idx + 1:])
+    body = body.lstrip('\n')
+
+    return metadata, body
+
+
+def generate_opencode_preamble(metadata: dict, file_type: str) -> str:
+    """
+    Generate OpenCode-compliant YAML frontmatter.
+
+    Args:
+        metadata: Parsed source metadata dict
+        file_type: 'agent' or 'command'
+
+    Returns:
+        OpenCode-compliant frontmatter string (including --- markers)
+    """
+    opencode_meta = {}
+
+    # Always keep description
+    if 'description' in metadata:
+        opencode_meta['description'] = metadata['description']
+
+    # Agent-specific fields
+    if file_type == 'agent':
+        opencode_meta['mode'] = 'subagent'
+
+    # Command-specific fields (keep agent if present in source, though Claude Code doesn't use it)
+    if file_type == 'command' and 'agent' in metadata:
+        opencode_meta['agent'] = metadata['agent']
+
+    if not opencode_meta:
+        return ''
+
+    # Generate YAML with proper formatting
+    yaml_str = yaml.dump(opencode_meta, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    return f"---\n{yaml_str}---\n"
+
+
+def get_file_type(relative_path: Path) -> str | None:
+    """
+    Determine if file is an agent or command based on its path.
+
+    Returns 'agent', 'command', or None if neither.
+    """
+    parts = relative_path.parts
+    if not parts:
+        return None
+
+    first_dir = parts[0]
+    if first_dir in ('agents', 'agent'):
+        return 'agent'
+    elif first_dir in ('commands', 'command'):
+        return 'command'
+    return None
 
 
 def get_target_path(source_path: Path, source_root: Path, target_root: Path) -> Path:
@@ -36,93 +119,200 @@ def get_target_path(source_path: Path, source_root: Path, target_root: Path) -> 
     parts = list(relative_path.parts)
 
     # Map folder names
-    if parts[0] == 'agents':
+    if parts and parts[0] == 'agents':
         parts[0] = 'agent'
-    elif parts[0] == 'commands':
+    elif parts and parts[0] == 'commands':
         parts[0] = 'command'
 
     return target_root / Path(*parts)
 
 
-def transfer_files(source_root: Path, target_root: Path):
+def get_source_configs(project_root: Path) -> list[tuple[Path, str]]:
     """
-    Transfer all .md files from source to target, removing preambles.
+    Get all source directories and their types.
+
+    Returns list of (source_path, folder_type) tuples where folder_type is 'agents' or 'commands'.
     """
-    if not source_root.exists():
-        print(f"Error: Source directory does not exist: {source_root}")
-        return
+    sources = []
 
-    if not target_root.exists():
-        print(f"Error: Target directory does not exist: {target_root}")
-        return
+    # claude-maratai-dev
+    dev_root = project_root / "claude-maratai-dev"
+    if dev_root.exists():
+        agents_dir = dev_root / "agents"
+        commands_dir = dev_root / "commands"
+        if agents_dir.exists():
+            sources.append((agents_dir, 'agents'))
+        if commands_dir.exists():
+            sources.append((commands_dir, 'commands'))
 
-    # Find all .md files in source
-    md_files = list(source_root.rglob("*.md"))
+    # claude-maratai-manager
+    manager_root = project_root / "claude-maratai-manager"
+    if manager_root.exists():
+        commands_dir = manager_root / "commands"
+        if commands_dir.exists():
+            sources.append((commands_dir, 'commands'))
 
-    if not md_files:
-        print(f"No .md files found in {source_root}")
-        return
+    return sources
 
-    print(f"Found {len(md_files)} markdown files to transfer\n")
 
-    for source_file in md_files:
-        # Read source file
-        try:
-            content = source_file.read_text(encoding='utf-8')
-        except Exception as e:
-            print(f"✗ Error reading {source_file}: {e}")
+def transfer_file(source_file: Path, target_file: Path, file_type: str) -> bool:
+    """
+    Transfer a single file, transforming frontmatter.
+
+    Returns True if successful, False otherwise.
+    """
+    try:
+        content = source_file.read_text(encoding='utf-8')
+    except Exception as e:
+        print(f"  Error reading {source_file}: {e}")
+        return False
+
+    # Parse source frontmatter
+    metadata, body = parse_frontmatter(content)
+
+    # Generate OpenCode preamble
+    preamble = generate_opencode_preamble(metadata, file_type)
+
+    # Combine preamble and body
+    new_content = preamble + body
+
+    # Ensure target directory exists
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write to target
+    try:
+        target_file.write_text(new_content, encoding='utf-8')
+        return True
+    except Exception as e:
+        print(f"  Error writing {target_file}: {e}")
+        return False
+
+
+def cleanup_orphans(target_root: Path, valid_targets: set[Path]) -> int:
+    """
+    Remove files in target that don't have corresponding sources.
+
+    Returns number of files removed.
+    """
+    removed = 0
+
+    # Check agent and command directories
+    for subdir in ['agent', 'command']:
+        dir_path = target_root / subdir
+        if not dir_path.exists():
             continue
 
-        # Remove preamble
-        content_without_preamble = remove_preamble(content)
+        for target_file in dir_path.rglob("*.md"):
+            if target_file not in valid_targets:
+                try:
+                    target_file.unlink()
+                    print(f"  Removed orphan: {target_file.relative_to(target_root)}")
+                    removed += 1
+                except Exception as e:
+                    print(f"  Error removing {target_file}: {e}")
 
-        # Get target path
-        target_file = get_target_path(source_file, source_root, target_root)
+        # Clean up empty directories
+        for dir_to_check in sorted(dir_path.rglob("*"), reverse=True):
+            if dir_to_check.is_dir() and not any(dir_to_check.iterdir()):
+                try:
+                    dir_to_check.rmdir()
+                except Exception:
+                    pass
 
-        # Ensure target directory exists
-        target_file.parent.mkdir(parents=True, exist_ok=True)
-
-        # get target file preamble
-        target_preamble = ""
-        if target_file.exists():
-            try:
-                target_content = target_file.read_text(encoding='utf-8')
-                target_preamble_match = re.match(r'^(---\s*\n.*?\n---\s*\n)', target_content, flags=re.DOTALL)
-                if target_preamble_match:
-                    target_preamble = target_preamble_match.group(1)
-                    content_without_preamble = target_preamble + content_without_preamble
-            except Exception as e:
-                print(f"✗ Error reading {target_file} for preamble: {e}")
-                # If error reading target file, proceed without adding preamble
-        
-        # Write to target file with target preamble if exists
-        try:
-            target_file.write_text(content_without_preamble, encoding='utf-8')
-            print(f"✓ Transferred {source_file} to {target_file}") 
-        except Exception as e:
-            print(f"✗ Error writing {target_file}: {e}")
+    return removed
 
 
 def main():
-    # Get script directory (project root)
     project_root = Path(__file__).parent
-
-    source_root = project_root / "claude-maratai-dev"
     target_root = project_root / "opencode"
 
     print("=" * 60)
-    print("Transferring files from claude-maratai-dev to opencode")
+    print("Transfer Claude Code -> OpenCode")
     print("=" * 60)
-    print(f"Source: {source_root}")
     print(f"Target: {target_root}")
-    print("=" * 60)
     print()
 
-    transfer_files(source_root, target_root)
+    if not target_root.exists():
+        print(f"Creating target directory: {target_root}")
+        target_root.mkdir(parents=True, exist_ok=True)
 
+    # Get all source directories
+    sources = get_source_configs(project_root)
+    if not sources:
+        print("No source directories found!")
+        return
+
+    print(f"Found {len(sources)} source directories")
     print()
+
+    # Track all valid target files for orphan cleanup
+    valid_targets: set[Path] = set()
+
+    # Process each source
+    transferred = 0
+    skipped = 0
+
+    for source_dir, folder_type in sources:
+        file_type = 'agent' if folder_type == 'agents' else 'command'
+        parent_name = source_dir.parent.name
+
+        print(f"--- {parent_name}/{folder_type} ---")
+
+        md_files = list(source_dir.rglob("*.md"))
+        if not md_files:
+            print("  No .md files found")
+            continue
+
+        for source_file in md_files:
+            # Calculate target path
+            relative_to_parent = source_file.relative_to(source_dir.parent)
+            target_file = get_target_path(
+                source_dir.parent / relative_to_parent,
+                source_dir.parent,
+                target_root
+            )
+
+            valid_targets.add(target_file)
+
+            # Check if content changed
+            needs_update = True
+            if target_file.exists():
+                try:
+                    # Parse both files to compare
+                    source_content = source_file.read_text(encoding='utf-8')
+                    source_meta, source_body = parse_frontmatter(source_content)
+                    expected_preamble = generate_opencode_preamble(source_meta, file_type)
+                    expected_content = expected_preamble + source_body
+
+                    target_content = target_file.read_text(encoding='utf-8')
+                    if target_content == expected_content:
+                        needs_update = False
+                except Exception:
+                    pass
+
+            if needs_update:
+                if transfer_file(source_file, target_file, file_type):
+                    rel_source = source_file.relative_to(project_root)
+                    rel_target = target_file.relative_to(target_root)
+                    print(f"  Transferred: {rel_source} -> {rel_target}")
+                    transferred += 1
+                else:
+                    skipped += 1
+            else:
+                skipped += 1
+
+        print()
+
+    # Cleanup orphans
+    print("--- Cleanup ---")
+    removed = cleanup_orphans(target_root, valid_targets)
+    if removed == 0:
+        print("  No orphans found")
+    print()
+
+    # Summary
     print("=" * 60)
-    print("Transfer complete!")
+    print(f"Transfer complete: {transferred} transferred, {skipped} unchanged, {removed} removed")
     print("=" * 60)
 
 

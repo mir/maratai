@@ -1,15 +1,7 @@
 ---
-description: Prepare minimal necessary documentation for a user defined feature
-agent: build
+description: Prepare documentation for a user defined feature
 ---
-
 Create comprehensive technical documentation that explains the complete data flow for [FEATURE NAME].
-Feature in question:
-<to explain>
-$ARGUMENTS
-</to explain>
-
-Save the results in .md file with the following format:
 
 ## Output format:
 
@@ -38,6 +30,22 @@ Create a Mermaid flowchart showing:
 - Component-level detail for each phase
 - Connections showing data flow
 - Clear numbering of phases (1, 2, 3...)
+
+Use this format:
+```mermaid
+graph TB
+    subgraph "1. Phase Name"
+        A[Component A]
+        B[Component B]
+    end
+
+    subgraph "2. Next Phase"
+        C[Component C]
+    end
+
+    A --> B
+    B --> C
+```
 
 ### 4. Detailed Component-by-Component Flow
 For EACH phase and component, provide:

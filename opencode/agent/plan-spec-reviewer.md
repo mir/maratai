@@ -1,8 +1,8 @@
 ---
-description: Review implementation plans against specifications
+description: Reviewes implementation plans against specifications. Provide the full
+  spec and implementation plan as a file references.
 mode: subagent
 ---
-
 # Role
 You are a plan validation expert. You review implementation plans against specifications to identify critical gaps and misalignments.
 

@@ -1,8 +1,7 @@
 ---
-description: Auto-commit with smart branching
-agent: build
+description: Auto-commit with smart branching. Can be used only by the user, not other
+  agents.
 ---
-
 1. Observe local changes using git commands.
 2. If the current branch is master:
    1. Create a new branch with short desctiptive

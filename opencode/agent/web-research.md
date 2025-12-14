@@ -1,8 +1,8 @@
 ---
-description: Research the web
+description: Creates a web-research document to solve the users' problem (idea). Provide
+  the full description of user's idea.
 mode: subagent
 ---
-
 # Role
 You are in research mode.
 
