@@ -1,7 +1,8 @@
 ---
 description: Prepare documentation for a user defined feature
 ---
-Create comprehensive technical documentation that explains the complete data flow for [FEATURE NAME].
+Create comprehensive technical documentation that explains the complete data flow for the following feature:
+$ARGUMENTS
 
 ## Output format:
 
@@ -34,17 +35,7 @@ Create a Mermaid flowchart showing:
 Use this format:
 ```mermaid
 graph TB
-    subgraph "1. Phase Name"
-        A[Component A]
-        B[Component B]
-    end
-
-    subgraph "2. Next Phase"
-        C[Component C]
-    end
-
-    A --> B
-    B --> C
+  ...
 ```
 
 ### 4. Detailed Component-by-Component Flow
@@ -62,8 +53,8 @@ For EACH phase and component, provide:
 
 **Code Examples:**
 ```language
-// Relevant minimal only essential code snippets. Skip if not essential.
-const example = "value"
+// Relevant minimal only essential code extraction. Skip if not essential.
+...
 ```
 
 **State Changes:**
