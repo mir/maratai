@@ -2,6 +2,7 @@
 # /// script
 # dependencies = [
 #   "httpx>=0.27",
+#   "httpx-sse>=0.4",
 #   "keyring>=25.0",
 #   "pyyaml>=6.0"
 # ]
@@ -10,15 +11,18 @@
 """
 Confluence API operations script.
 
+Uses MCP client to communicate with Atlassian MCP server.
+
 Commands:
     get <PAGE_ID>         - Fetch a page with content
     search <CQL>          - Search pages using CQL
     children <PAGE_ID>    - Get child pages
-    attachments <PAGE_ID> - Get page attachments
+    spaces                - List Confluence spaces
 """
 
 import argparse
 import html
+import json
 import re
 import sys
 from pathlib import Path
@@ -26,12 +30,20 @@ from pathlib import Path
 # Add parent directory to path for common module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from common import (
-    AtlassianClient,
-    AtlassianError,
-    yaml_output,
-    error_output,
-)
+import yaml
+
+from common import get_stored_value, yaml_output, error_output
+from mcp_client import AtlassianMCPClient, MCPError, AuthenticationError
+
+
+def get_cloud_id() -> str:
+    """Get the stored cloud ID."""
+    cloud_id = get_stored_value("cloud_id")
+    if not cloud_id:
+        raise Exception(
+            "No cloud ID stored. Run: uv run scripts/auth.py login"
+        )
+    return cloud_id
 
 
 def html_to_text(html_content: str) -> str:
@@ -74,24 +86,29 @@ def format_page(page: dict, include_content: bool = True) -> dict:
     }
 
     # Space info
-    space = page.get("space")
-    if space:
+    space = page.get("space") or page.get("spaceId")
+    if isinstance(space, dict):
         result["space"] = {
             "key": space.get("key"),
             "name": space.get("name"),
         }
+    elif space:
+        result["space"] = {"id": space}
 
     # Version/dates
     version = page.get("version")
     if version:
-        result["version"] = version.get("number")
-        result["updated"] = version.get("createdAt")
-        author = version.get("by")
-        if author:
-            result["author"] = {
-                "name": author.get("displayName"),
-                "account_id": author.get("accountId"),
-            }
+        if isinstance(version, dict):
+            result["version"] = version.get("number")
+            result["updated"] = version.get("createdAt")
+            author = version.get("by")
+            if author:
+                result["author"] = {
+                    "name": author.get("displayName"),
+                    "account_id": author.get("accountId"),
+                }
+        else:
+            result["version"] = version
 
     # Created date from history
     history = page.get("history")
@@ -105,11 +122,20 @@ def format_page(page: dict, include_content: bool = True) -> dict:
             {"id": a.get("id"), "title": a.get("title")} for a in ancestors
         ]
 
-    # Content
+    # Content - check both body.storage (v1 API) and body (v2 API)
     if include_content:
         body = page.get("body", {})
-        storage = body.get("storage", {})
-        content_value = storage.get("value", "")
+        if isinstance(body, dict):
+            # v1 API format
+            storage = body.get("storage", {})
+            content_value = storage.get("value", "")
+            # v2 API format
+            if not content_value:
+                atlas_doc = body.get("atlas_doc_format", {})
+                content_value = atlas_doc.get("value", "")
+        else:
+            content_value = str(body) if body else ""
+
         if content_value:
             result["content"] = html_to_text(content_value)
 
@@ -117,178 +143,250 @@ def format_page(page: dict, include_content: bool = True) -> dict:
 
 
 def cmd_get(args):
-    """Fetch a page with content."""
+    """Fetch a page with content via MCP."""
+    client = None
     try:
-        client = AtlassianClient()
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
 
-        # Use v1 API for full content with storage format
-        page = client.confluence_get(
-            f"/wiki/rest/api/content/{args.page_id}",
-            params={
-                "expand": "body.storage,space,version,ancestors,history",
+        result = client.call_tool(
+            "getConfluencePage",
+            {
+                "cloudId": cloud_id,
+                "pageId": args.page_id,
+                "includeBody": True,
             },
         )
 
-        yaml_output({"page": format_page(page)})
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
 
-    except AtlassianError as e:
+        yaml_output({"page": format_page(result)})
+
+    except AuthenticationError as e:
         error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
 
 
 def cmd_search(args):
-    """Search pages using CQL."""
+    """Search pages using CQL via MCP."""
+    client = None
     try:
-        client = AtlassianClient()
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
 
-        response = client.confluence_get(
-            "/wiki/rest/api/content/search",
-            params={
+        result = client.call_tool(
+            "searchConfluenceUsingCql",
+            {
+                "cloudId": cloud_id,
                 "cql": args.cql,
-                "limit": args.limit,
-                "expand": "space,version,ancestors",
+                "maxResults": args.limit,
             },
         )
 
-        results = response.get("results", [])
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
 
-        result = {
+        results = result.get("results", [])
+
+        output = {
             "search": {
                 "cql": args.cql,
-                "total": response.get("totalSize", len(results)),
+                "total": result.get("totalSize", len(results)),
                 "returned": len(results),
-                "pages": [
-                    {
-                        "id": p.get("id"),
-                        "title": p.get("title"),
-                        "type": p.get("type"),
-                        "space": p.get("space", {}).get("key"),
-                        "updated": p.get("version", {}).get("when"),
-                        "url": p.get("_links", {}).get("webui"),
-                    }
-                    for p in results
-                ],
+                "pages": [],
             }
         }
 
-        # Add pagination links
-        links = response.get("_links", {})
-        if links.get("next"):
-            result["search"]["has_more"] = True
+        for p in results:
+            content = p.get("content", {})
+            page_info = {
+                "id": content.get("id"),
+                "title": p.get("title") or content.get("title"),
+                "type": content.get("type"),
+                "url": p.get("url"),
+                "excerpt": p.get("excerpt", "")[:200],
+            }
+            # Add space if available
+            space = p.get("resultGlobalContainer", {})
+            if space:
+                page_info["space"] = space.get("title")
+            # Add last modified
+            if p.get("lastModified"):
+                page_info["updated"] = p.get("lastModified")
 
-        yaml_output(result)
+            output["search"]["pages"].append(page_info)
 
-    except AtlassianError as e:
+        yaml_output(output)
+
+    except AuthenticationError as e:
         error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
 
 
 def cmd_children(args):
-    """Get child pages."""
+    """Get child pages via MCP."""
+    client = None
     try:
-        client = AtlassianClient()
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
 
-        response = client.confluence_get(
-            f"/wiki/rest/api/content/{args.page_id}/child/page",
-            params={
-                "limit": args.limit,
-                "expand": "version",
+        result = client.call_tool(
+            "getConfluencePageDescendants",
+            {
+                "cloudId": cloud_id,
+                "pageId": args.page_id,
+                "maxResults": args.limit,
             },
         )
 
-        children = response.get("results", [])
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
 
-        result = {
+        children = result.get("results", result) if isinstance(result, dict) else result
+
+        output = {
             "children": {
                 "parent_id": args.page_id,
-                "total": response.get("size", len(children)),
-                "pages": [
-                    {
-                        "id": c.get("id"),
-                        "title": c.get("title"),
-                        "status": c.get("status"),
-                        "updated": c.get("version", {}).get("when"),
-                    }
-                    for c in children
-                ],
+                "total": len(children) if isinstance(children, list) else 0,
+                "pages": [],
             }
         }
 
-        yaml_output(result)
+        if isinstance(children, list):
+            for c in children:
+                output["children"]["pages"].append({
+                    "id": c.get("id"),
+                    "title": c.get("title"),
+                    "status": c.get("status"),
+                })
 
-    except AtlassianError as e:
+        yaml_output(output)
+
+    except AuthenticationError as e:
         error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
 
 
-def cmd_attachments(args):
-    """Get page attachments."""
+def cmd_spaces(args):
+    """List Confluence spaces via MCP."""
+    client = None
     try:
-        client = AtlassianClient()
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
 
-        response = client.confluence_get(
-            f"/wiki/rest/api/content/{args.page_id}/child/attachment",
-            params={
-                "limit": args.limit,
-                "expand": "version",
+        result = client.call_tool(
+            "getConfluenceSpaces",
+            {
+                "cloudId": cloud_id,
+                "maxResults": args.limit,
             },
         )
 
-        attachments = response.get("results", [])
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
 
-        result = {
-            "attachments": {
-                "page_id": args.page_id,
-                "total": response.get("size", len(attachments)),
+        spaces = result.get("results", [])
+
+        output = {
+            "spaces": {
+                "total": len(spaces),
                 "items": [
                     {
-                        "id": a.get("id"),
-                        "title": a.get("title"),
-                        "filename": a.get("title"),
-                        "media_type": a.get("metadata", {})
-                        .get("mediaType", a.get("extensions", {}).get("mediaType")),
-                        "size": a.get("extensions", {}).get("fileSize"),
-                        "download_url": a.get("_links", {}).get("download"),
+                        "id": s.get("id"),
+                        "key": s.get("key"),
+                        "name": s.get("name"),
+                        "type": s.get("type"),
                     }
-                    for a in attachments
+                    for s in spaces
                 ],
             }
         }
 
-        yaml_output(result)
+        yaml_output(output)
 
-    except AtlassianError as e:
+    except AuthenticationError as e:
         error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
 
 
 def cmd_ancestors(args):
-    """Get ancestor (parent) pages."""
+    """Get ancestor (parent) pages via MCP."""
+    client = None
     try:
-        client = AtlassianClient()
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
 
-        page = client.confluence_get(
-            f"/wiki/rest/api/content/{args.page_id}",
-            params={"expand": "ancestors"},
+        # Get page with ancestors
+        result = client.call_tool(
+            "getConfluencePage",
+            {
+                "cloudId": cloud_id,
+                "pageId": args.page_id,
+                "includeBody": False,
+            },
         )
 
-        ancestors = page.get("ancestors", [])
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
 
-        result = {
+        ancestors = result.get("ancestors", [])
+
+        output = {
             "ancestors": {
                 "page_id": args.page_id,
-                "page_title": page.get("title"),
+                "page_title": result.get("title"),
                 "parents": [
                     {"id": a.get("id"), "title": a.get("title")} for a in ancestors
                 ],
             }
         }
 
-        yaml_output(result)
+        yaml_output(output)
 
-    except AtlassianError as e:
+    except AuthenticationError as e:
         error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Confluence API operations",
+        description="Confluence API operations (via MCP)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -311,10 +409,9 @@ def main():
         "--limit", "-l", type=int, default=50, help="Max results (default: 50)"
     )
 
-    # attachments command
-    attach_parser = subparsers.add_parser("attachments", help="Get page attachments")
-    attach_parser.add_argument("page_id", help="Page ID")
-    attach_parser.add_argument(
+    # spaces command
+    spaces_parser = subparsers.add_parser("spaces", help="List Confluence spaces")
+    spaces_parser.add_argument(
         "--limit", "-l", type=int, default=50, help="Max results (default: 50)"
     )
 
@@ -332,7 +429,7 @@ def main():
         "get": cmd_get,
         "search": cmd_search,
         "children": cmd_children,
-        "attachments": cmd_attachments,
+        "spaces": cmd_spaces,
         "ancestors": cmd_ancestors,
     }
 

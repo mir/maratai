@@ -9,7 +9,7 @@ Access Jira and Confluence content via Python scripts. All output is YAML format
 
 ## Setup (First Time Only)
 
-### Option 1: OAuth Login (Recommended)
+### OAuth Login
 
 No prerequisites required - pure Python implementation.
 
@@ -18,23 +18,6 @@ uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py login
 ```
 
 This opens your browser for Atlassian OAuth consent. No need to create an OAuth app - uses Atlassian's official MCP authentication with automatic client registration.
-
-### Option 2: API Token
-
-Set environment variables:
-- `ATLASSIAN_EMAIL` - Your Atlassian account email
-- `ATLASSIAN_API_TOKEN` - API token from https://id.atlassian.com/manage-profile/security/api-tokens
-- `ATLASSIAN_SITE_URL` - Your site URL (e.g., `https://yoursite.atlassian.net`)
-
-Then run:
-```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py setup-token
-```
-
-Or pass directly:
-```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py setup-token --email you@example.com --token YOUR_TOKEN --site-url https://yoursite.atlassian.net
-```
 
 ## Jira Commands
 
@@ -59,6 +42,11 @@ Common JQL examples:
 ### Get comments
 ```bash
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py comments PROJ-123
+```
+
+### List projects
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py projects
 ```
 
 ## Confluence Commands
@@ -86,9 +74,9 @@ Common CQL examples:
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py children 123456789
 ```
 
-### Get attachments
+### List spaces
 ```bash
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py attachments 123456789
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py spaces
 ```
 
 ### Get parent pages (ancestors)
@@ -146,8 +134,7 @@ page:
 Run: `uv run --directory /path/to/skill scripts/auth.py login`
 
 ### "Token expired" error
-For OAuth: Run `auth.py login` again to re-authenticate.
-For API token: Tokens don't expire, check your credentials with `auth.py status`.
+Run `auth.py login` again to re-authenticate. OAuth tokens auto-refresh, but refresh tokens can expire after extended periods of inactivity.
 
 ### "No cloud ID" error
 Re-authenticate: `uv run --directory /path/to/skill scripts/auth.py login`

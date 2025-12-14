@@ -45,6 +45,16 @@ TOKENS_FILE = os.path.join(CONFIG_DIR, "tokens.json")
 # Default callback port
 DEFAULT_CALLBACK_PORT = 9876
 
+# OAuth scopes for Jira and Confluence access
+DEFAULT_SCOPES = [
+    "read:jira-work",
+    "read:jira-user",
+    "read:confluence-content.all",
+    "read:confluence-space.summary",
+    "read:confluence-user",
+    "offline_access",  # Needed for refresh tokens
+]
+
 
 class OAuthError(Exception):
     """OAuth error."""
@@ -290,7 +300,7 @@ class AtlassianMCPOAuth:
         return client_info
 
     def get_authorization_url(
-        self, client_id: str, code_challenge: str, state: str
+        self, client_id: str, code_challenge: str, state: str, scopes: list[str] | None = None
     ) -> str:
         """Build authorization URL for browser."""
         params = {
@@ -301,6 +311,8 @@ class AtlassianMCPOAuth:
             "code_challenge_method": "S256",
             "state": state,
         }
+        if scopes:
+            params["scope"] = " ".join(scopes)
         return f"{AUTHORIZATION_ENDPOINT}?{urlencode(params)}"
 
     def exchange_code(
@@ -378,13 +390,19 @@ class AtlassianMCPOAuth:
 
         return tokens
 
-    def login(self) -> dict:
+    def login(self, scopes: list[str] | None = None) -> dict:
         """
         Perform full OAuth login flow.
+
+        Args:
+            scopes: OAuth scopes to request. Defaults to DEFAULT_SCOPES.
 
         Returns:
             Token dict
         """
+        if scopes is None:
+            scopes = DEFAULT_SCOPES
+
         # 1. Load or register client
         client_info = load_client_info()
         if not client_info:
@@ -400,7 +418,7 @@ class AtlassianMCPOAuth:
         state = secrets.token_urlsafe(32)
 
         # 4. Build authorization URL
-        auth_url = self.get_authorization_url(client_id, code_challenge, state)
+        auth_url = self.get_authorization_url(client_id, code_challenge, state, scopes)
 
         # 5. Open browser
         print("\nOpening browser for Atlassian login...")

@@ -39,7 +39,7 @@ This guide walks you through creating an OAuth 2.0 app in the Atlassian Develope
 2. Click "Add" next to "OAuth 2.0 (3LO)"
 3. Set the callback URL:
    ```
-   http://localhost:8765/callback
+   http://localhost:9876/callback
    ```
 4. Click "Save changes"
 
@@ -87,7 +87,7 @@ This will:
 ## Troubleshooting
 
 ### "Invalid redirect URI"
-Ensure the callback URL is exactly: `http://localhost:8765/callback`
+Ensure the callback URL is exactly: `http://localhost:9876/callback`
 
 ### "Scope not authorized"
 Go back to Permissions and ensure all required scopes are added.

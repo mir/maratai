@@ -2,6 +2,7 @@
 # /// script
 # dependencies = [
 #   "httpx>=0.27",
+#   "httpx-sse>=0.4",
 #   "keyring>=25.0",
 #   "pyyaml>=6.0"
 # ]
@@ -10,25 +11,35 @@
 """
 Jira API operations script.
 
+Uses MCP client to communicate with Atlassian MCP server.
+
 Commands:
     get <KEY>         - Fetch a single issue with all details
     search <JQL>      - Search issues using JQL
     comments <KEY>    - Get comments for an issue
+    projects          - List accessible Jira projects
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 # Add parent directory to path for common module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from common import (
-    AtlassianClient,
-    AtlassianError,
-    yaml_output,
-    error_output,
-)
+from common import get_stored_value, yaml_output, error_output
+from mcp_client import AtlassianMCPClient, MCPError, AuthenticationError
+
+
+def get_cloud_id() -> str:
+    """Get the stored cloud ID."""
+    cloud_id = get_stored_value("cloud_id")
+    if not cloud_id:
+        raise Exception(
+            "No cloud ID stored. Run: uv run scripts/auth.py login"
+        )
+    return cloud_id
 
 
 def format_user(user_data: dict | None) -> dict | None:
@@ -140,114 +151,138 @@ def extract_text_from_adf(adf: dict) -> str:
 
 
 def cmd_get(args):
-    """Fetch a single issue with all details."""
+    """Fetch a single issue with all details via MCP."""
+    client = None
     try:
-        client = AtlassianClient()
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
 
-        # Fields to retrieve
-        fields = [
-            "summary",
-            "description",
-            "status",
-            "issuetype",
-            "priority",
-            "assignee",
-            "reporter",
-            "created",
-            "updated",
-            "parent",
-            "labels",
-            "comment",
-            "attachment",
-        ]
-
-        issue = client.jira_get(
-            f"/issue/{args.key}",
-            params={"fields": ",".join(fields), "expand": "renderedFields"},
-        )
-
-        yaml_output({"issue": format_issue(issue)})
-
-    except AtlassianError as e:
-        error_output(str(e))
-
-
-def cmd_search(args):
-    """Search issues using JQL."""
-    try:
-        client = AtlassianClient()
-
-        # Use the JQL search endpoint
-        search_fields = [
-            "summary",
-            "status",
-            "issuetype",
-            "priority",
-            "assignee",
-            "created",
-            "updated",
-        ]
-
-        # POST to /search/jql for newer API
-        response = client.jira_post(
-            "/search/jql",
-            json_data={
-                "jql": args.jql,
-                "maxResults": args.limit,
-                "fields": search_fields,
+        result = client.call_tool(
+            "getJiraIssue",
+            {
+                "cloudId": cloud_id,
+                "issueIdOrKey": args.key,
             },
         )
 
-        issues = response.get("issues", [])
-        total = response.get("total", 0)
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
 
-        result = {
+        yaml_output({"issue": format_issue(result)})
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_search(args):
+    """Search issues using JQL via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        result = client.call_tool(
+            "searchJiraIssuesUsingJql",
+            {
+                "cloudId": cloud_id,
+                "jql": args.jql,
+                "maxResults": args.limit,
+            },
+        )
+
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        issues = result.get("issues", [])
+
+        output = {
             "search": {
                 "jql": args.jql,
-                "total": total,
+                "total": len(issues),
                 "returned": len(issues),
-                "issues": [
-                    {
-                        "key": i.get("key"),
-                        "type": i.get("fields", {}).get("issuetype", {}).get("name"),
-                        "status": i.get("fields", {}).get("status", {}).get("name"),
-                        "priority": i.get("fields", {}).get("priority", {}).get("name") if i.get("fields", {}).get("priority") else None,
-                        "summary": i.get("fields", {}).get("summary"),
-                        "assignee": format_user(i.get("fields", {}).get("assignee")).get("name") if i.get("fields", {}).get("assignee") else None,
-                        "created": i.get("fields", {}).get("created"),
-                    }
-                    for i in issues
-                ],
+                "issues": [],
             }
         }
 
-        # Add pagination token if more results
-        next_token = response.get("nextPageToken")
-        if next_token:
-            result["search"]["next_page_token"] = next_token
+        for i in issues:
+            fields = i.get("fields", {})
+            issue_info = {
+                "key": i.get("key"),
+                "type": fields.get("issuetype", {}).get("name"),
+                "status": fields.get("status", {}).get("name"),
+                "summary": fields.get("summary"),
+            }
 
-        yaml_output(result)
+            # Priority
+            priority = fields.get("priority")
+            if priority:
+                issue_info["priority"] = priority.get("name")
 
-    except AtlassianError as e:
+            # Assignee
+            assignee = fields.get("assignee")
+            if assignee:
+                issue_info["assignee"] = assignee.get("displayName")
+
+            # Created date
+            if fields.get("created"):
+                issue_info["created"] = fields.get("created")
+
+            output["search"]["issues"].append(issue_info)
+
+        # Add pagination info
+        if result.get("nextPageToken"):
+            output["search"]["has_more"] = True
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
         error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
 
 
 def cmd_comments(args):
-    """Get comments for an issue."""
+    """Get comments for an issue via MCP."""
+    client = None
     try:
-        client = AtlassianClient()
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
 
-        response = client.jira_get(
-            f"/issue/{args.key}/comment",
-            params={"maxResults": args.limit, "orderBy": "-created"},
+        # First get the issue to retrieve comments
+        result = client.call_tool(
+            "getJiraIssue",
+            {
+                "cloudId": cloud_id,
+                "issueIdOrKey": args.key,
+            },
         )
 
-        comments = response.get("comments", [])
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
 
-        result = {
+        fields = result.get("fields", {})
+        comment_data = fields.get("comment", {})
+        comments = comment_data.get("comments", [])
+
+        output = {
             "comments": {
                 "issue_key": args.key,
-                "total": response.get("total", len(comments)),
+                "total": len(comments),
                 "items": [
                     {
                         "id": c.get("id"),
@@ -256,20 +291,77 @@ def cmd_comments(args):
                         "updated": c.get("updated"),
                         "body": extract_text_from_adf(c.get("body")) if isinstance(c.get("body"), dict) else c.get("body"),
                     }
-                    for c in comments
+                    for c in comments[:args.limit]
                 ],
             }
         }
 
-        yaml_output(result)
+        yaml_output(output)
 
-    except AtlassianError as e:
+    except AuthenticationError as e:
         error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_projects(args):
+    """List accessible Jira projects via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        result = client.call_tool(
+            "getVisibleJiraProjects",
+            {
+                "cloudId": cloud_id,
+                "maxResults": args.limit,
+            },
+        )
+
+        # Parse JSON result if string
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        projects = result.get("values", result) if isinstance(result, dict) else result
+
+        output = {
+            "projects": {
+                "total": len(projects) if isinstance(projects, list) else 0,
+                "items": [],
+            }
+        }
+
+        if isinstance(projects, list):
+            for p in projects:
+                output["projects"]["items"].append({
+                    "id": p.get("id"),
+                    "key": p.get("key"),
+                    "name": p.get("name"),
+                    "type": p.get("projectTypeKey"),
+                })
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Jira API operations",
+        description="Jira API operations (via MCP)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -292,6 +384,12 @@ def main():
         "--limit", "-l", type=int, default=50, help="Max comments (default: 50)"
     )
 
+    # projects command
+    projects_parser = subparsers.add_parser("projects", help="List Jira projects")
+    projects_parser.add_argument(
+        "--limit", "-l", type=int, default=50, help="Max results (default: 50)"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -302,6 +400,7 @@ def main():
         "get": cmd_get,
         "search": cmd_search,
         "comments": cmd_comments,
+        "projects": cmd_projects,
     }
 
     commands[args.command](args)
