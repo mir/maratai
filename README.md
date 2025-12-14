@@ -98,22 +98,24 @@ Skill Reference (maratai-manager)
 
 Claude Code Plugins
 -------------------
-To install the Claude Code plugins:
+To install the Claude Code plugins, run these commands inside Claude Code's
+interactive mode:
 
 1. Add the marketplace (one-time setup):
-   ```bash
-   claude mcp add-json maratai '{"type":"url","url":"https://raw.githubusercontent.com/mir/maratai/main/.claude-plugin/marketplace.json"}'
+   ```
+   /plugin marketplace add mir/maratai
    ```
 
 2. Install the plugins:
-   ```bash
-   claude plugin install maratai-dev@maratai    # Development workflows
-   claude plugin install maratai-manager@maratai # Management workflows (Atlassian)
+   ```
+   /plugin install maratai-dev@maratai    # Development workflows
+   /plugin install maratai-manager@maratai # Management workflows (Atlassian)
    ```
 
 3. Verify installation:
-   ```bash
-   claude plugin list
+   ```
+   /plugin marketplace list   # List configured marketplaces
+   /plugin                    # Open interactive plugin browser
    ```
 
 Cursor Rules
