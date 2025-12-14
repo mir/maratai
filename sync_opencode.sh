@@ -23,7 +23,7 @@ echo ""
 # Check if source directory exists
 if [ ! -d "$SOURCE_DIR" ]; then
     echo -e "${RED}Error: Source directory '$SOURCE_DIR' does not exist${NC}"
-    echo -e "${YELLOW}Please run this script from the marat_ai project root${NC}"
+    echo -e "${YELLOW}Please run this script from the maratai project root${NC}"
     exit 1
 fi
 

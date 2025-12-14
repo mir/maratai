@@ -1,0 +1,263 @@
+# /// script
+# dependencies = [
+#   "httpx>=0.27",
+#   "keyring>=25.0",
+#   "pyyaml>=6.0"
+# ]
+# requires-python = ">=3.12"
+# ///
+"""
+Shared utilities for Atlassian API scripts.
+Provides HTTP client with automatic token refresh and YAML output formatting.
+Supports both OAuth 2.0 (3LO) and Basic Auth (API token).
+"""
+
+import base64
+import sys
+import time
+from typing import Any
+
+import httpx
+import keyring
+import yaml
+
+SERVICE_NAME = "atlassian-claude-skill"
+
+
+class AtlassianError(Exception):
+    """Base exception for Atlassian API errors."""
+    pass
+
+
+class AuthenticationError(AtlassianError):
+    """Token expired, invalid, or missing."""
+    pass
+
+
+class NotFoundError(AtlassianError):
+    """Resource not found."""
+    pass
+
+
+class RateLimitError(AtlassianError):
+    """API rate limit exceeded."""
+    pass
+
+
+class ConfigurationError(AtlassianError):
+    """Missing configuration (client_id, client_secret, etc.)."""
+    pass
+
+
+def get_stored_value(key: str) -> str | None:
+    """Retrieve a value from Keychain."""
+    return keyring.get_password(SERVICE_NAME, key)
+
+
+def set_stored_value(key: str, value: str) -> None:
+    """Store a value in Keychain."""
+    keyring.set_password(SERVICE_NAME, key, value)
+
+
+def delete_stored_value(key: str) -> None:
+    """Delete a value from Keychain."""
+    try:
+        keyring.delete_password(SERVICE_NAME, key)
+    except keyring.errors.PasswordDeleteError:
+        pass  # Key doesn't exist
+
+
+def get_auth_type() -> str:
+    """Get the configured authentication type ('basic' or 'oauth')."""
+    return get_stored_value("auth_type") or "oauth"
+
+
+def get_basic_auth_header() -> str:
+    """
+    Get Basic Auth header value for API token authentication.
+    Raises AuthenticationError if credentials not configured.
+    """
+    email = get_stored_value("api_email")
+    api_token = get_stored_value("api_token")
+
+    if not email or not api_token:
+        raise AuthenticationError(
+            "API token not configured. Run: uv run scripts/auth.py setup-token"
+        )
+
+    auth_string = base64.b64encode(f"{email}:{api_token}".encode()).decode()
+    return f"Basic {auth_string}"
+
+
+def get_valid_token() -> str:
+    """
+    Get a valid OAuth access token, refreshing if necessary.
+    Raises AuthenticationError if no valid token available.
+    Only used for OAuth auth type.
+    """
+    access_token = get_stored_value("access_token")
+    expires_at_str = get_stored_value("expires_at")
+
+    if not access_token:
+        raise AuthenticationError("Not authenticated. Run: uv run scripts/auth.py login")
+
+    expires_at = float(expires_at_str) if expires_at_str else 0
+
+    # Refresh if expiring within 5 minutes
+    if time.time() > expires_at - 300:
+        refresh_token = get_stored_value("refresh_token")
+        if not refresh_token:
+            raise AuthenticationError("No refresh token. Run: uv run scripts/auth.py login")
+
+        new_tokens = refresh_access_token(refresh_token)
+        return new_tokens["access_token"]
+
+    return access_token
+
+
+def refresh_access_token(refresh_token: str) -> dict:
+    """
+    Use refresh token to get new access/refresh token pair.
+    Updates stored tokens in Keychain.
+    """
+    client_id = get_stored_value("client_id")
+    client_secret = get_stored_value("client_secret")
+
+    if not client_id or not client_secret:
+        raise ConfigurationError(
+            "Missing OAuth credentials. Run: uv run scripts/auth.py setup"
+        )
+
+    with httpx.Client() as client:
+        response = client.post(
+            "https://auth.atlassian.com/oauth/token",
+            json={
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+            },
+            headers={"Content-Type": "application/json"},
+        )
+
+        if response.status_code != 200:
+            raise AuthenticationError(
+                f"Token refresh failed: {response.text}. Run: uv run scripts/auth.py login"
+            )
+
+        tokens = response.json()
+
+        # Store new tokens (rotating refresh token)
+        set_stored_value("access_token", tokens["access_token"])
+        set_stored_value("refresh_token", tokens["refresh_token"])
+        set_stored_value("expires_at", str(time.time() + tokens["expires_in"]))
+
+        return tokens
+
+
+def get_cloud_id() -> str:
+    """Get the stored cloud ID."""
+    cloud_id = get_stored_value("cloud_id")
+    if not cloud_id:
+        raise ConfigurationError(
+            "No cloud ID stored. Run: uv run scripts/auth.py login"
+        )
+    return cloud_id
+
+
+class AtlassianClient:
+    """HTTP client for Atlassian APIs with automatic token refresh."""
+
+    def __init__(self):
+        self.auth_type = get_auth_type()
+
+        if self.auth_type == "basic":
+            # Basic Auth uses direct site URLs
+            site_url = get_stored_value("site_url")
+            if not site_url:
+                raise ConfigurationError(
+                    "Site URL not configured. Run: uv run scripts/auth.py setup-token"
+                )
+            self.jira_base = f"{site_url}/rest/api/3"
+            self.confluence_base = f"{site_url}/wiki"
+            self.cloud_id = None
+        else:
+            # OAuth uses cloud API URLs
+            self.cloud_id = get_cloud_id()
+            self.jira_base = f"https://api.atlassian.com/ex/jira/{self.cloud_id}/rest/api/3"
+            self.confluence_base = f"https://api.atlassian.com/ex/confluence/{self.cloud_id}"
+
+    def _get_headers(self) -> dict:
+        """Get authorization headers."""
+        if self.auth_type == "basic":
+            auth_header = get_basic_auth_header()
+        else:
+            token = get_valid_token()
+            auth_header = f"Bearer {token}"
+
+        return {
+            "Authorization": auth_header,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+    def _handle_response(self, response: httpx.Response) -> dict | list:
+        """Handle API response, raising appropriate errors."""
+        if response.status_code == 401:
+            raise AuthenticationError(
+                "Authentication failed. Run: uv run scripts/auth.py login"
+            )
+        if response.status_code == 404:
+            raise NotFoundError("Resource not found")
+        if response.status_code == 429:
+            raise RateLimitError("Rate limited. Please wait and retry.")
+
+        response.raise_for_status()
+        return response.json()
+
+    def get(self, url: str, params: dict | None = None) -> dict | list:
+        """Make GET request to Atlassian API."""
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(url, headers=self._get_headers(), params=params)
+            return self._handle_response(response)
+
+    def post(self, url: str, json_data: dict | None = None) -> dict | list:
+        """Make POST request to Atlassian API."""
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(url, headers=self._get_headers(), json=json_data)
+            return self._handle_response(response)
+
+    # Jira convenience methods
+    def jira_get(self, endpoint: str, params: dict | None = None) -> dict | list:
+        """GET request to Jira API."""
+        return self.get(f"{self.jira_base}{endpoint}", params)
+
+    def jira_post(self, endpoint: str, json_data: dict | None = None) -> dict | list:
+        """POST request to Jira API."""
+        return self.post(f"{self.jira_base}{endpoint}", json_data)
+
+    # Confluence convenience methods
+    def confluence_get(self, endpoint: str, params: dict | None = None) -> dict | list:
+        """GET request to Confluence API."""
+        return self.get(f"{self.confluence_base}{endpoint}", params)
+
+
+def yaml_output(data: Any, stream=sys.stdout) -> None:
+    """
+    Output data as YAML to stdout.
+    Uses compact flow style for simple nested structures.
+    """
+    yaml.dump(
+        data,
+        stream,
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+        width=120,
+    )
+
+
+def error_output(message: str) -> None:
+    """Output error message as YAML to stderr."""
+    yaml.dump({"error": message}, sys.stderr, default_flow_style=False)
+    sys.exit(1)

@@ -1,5 +1,5 @@
-marat_ai
-========
+maratai
+=======
 
 Reusable prompts, command templates, and helper scripts that keep Marat's
 multi-agent coding assistants in sync. The repository centralizes the
@@ -8,7 +8,7 @@ once and re-used across tools.
 
 Repository Layout
 -----------------
-- `claude_marat_ai/` – source-of-truth prompt library for Claude, organised into
+- `claude_maratai/` – source-of-truth prompt library for Claude, organised into
   `agents/` and `commands/` with YAML front matter that captures metadata.
 - `opencode/` – OpenCode-compatible copies of the same prompts (folder names are
   singular and formatting matches OpenCode's expectations); also contains
@@ -16,13 +16,13 @@ Repository Layout
 - `codex/` – prompt set consumed by the Codex CLI (currently lives under
   `codex/prompts/`).
 - `transfer_from_claude.py` – utility that copies Markdown from
-  `claude_marat_ai/` to `opencode/`, stripping or reusing front matter as needed.
+  `claude_maratai/` to `opencode/`, stripping or reusing front matter as needed.
 - `sync_codex.sh` / `sync_opencode.sh` – helper scripts that push the local
   versions of prompts into each tool's configuration directory.
 
 Daily Workflow
 --------------
-1. Edit or add prompts inside `claude_marat_ai/` first so metadata stays
+1. Edit or add prompts inside `claude_maratai/` first so metadata stays
    consistent across platforms.
 2. Run `./transfer_from_claude.py` (requires [uv](https://github.com/astral-sh/uv))
    to refresh the OpenCode copies while keeping any OpenCode-specific preamble.
@@ -49,34 +49,34 @@ Adding or Updating Prompts
 
 Command Reference
 -----------------
-- **`claude_marat_ai/commands/commit.md`** – user-only auto-commit flow. Capture
+- **`claude_maratai/commands/commit.md`** – user-only auto-commit flow. Capture
   outstanding changes, branch off `master` when needed, stage, commit with a
   concise message, push, and prompt the user to file a merge request.
-- **`claude_marat_ai/commands/plan.md`** – deep implementation planner. Collects
+- **`claude_maratai/commands/plan.md`** – deep implementation planner. Collects
   inputs, drafts a markdown plan with architecture/data-flow diagrams, task
   checklist, and then invokes the plan-spec-reviewer agent.
-- **`claude_marat_ai/commands/prepare-feature.md`** – orchestration command that
+- **`claude_maratai/commands/prepare-feature.md`** – orchestration command that
   reforms a feature request, then spawns `project-search`, `web-research`, and
   `spec` agents in parallel and enforces numbered outputs under `docs/<feature>/`.
-- **`claude_marat_ai/commands/explain-feature.md`** – documentation generator for
+- **`claude_maratai/commands/explain-feature.md`** – documentation generator for
   a specific feature. Produces overview, sequence and flow diagrams, and a
   component-by-component walkthrough with file references and state changes.
-- **`claude_marat_ai/commands/week_report.md`** – weekly status writer. Summaries
+- **`claude_maratai/commands/week_report.md`** – weekly status writer. Summaries
   recent work per project and prepares (but does not send) a Slack payload with
   the formatted report.
 
 Agent Reference
 ---------------
-- **`claude_marat_ai/agents/project-search.md`** – scans the codebase for
+- **`claude_maratai/agents/project-search.md`** – scans the codebase for
   relevant files, outputs references, lightweight snippets, diagrams, and a
   trimmed summary in `docs/`.
-- **`claude_marat_ai/agents/spec.md`** – business-facing specification writer
+- **`claude_maratai/agents/spec.md`** – business-facing specification writer
   that distills user stories, functional requirements, edge cases, and a minimal
   end-to-end test plan without touching implementation details.
-- **`claude_marat_ai/agents/web-research.md`** – external research assistant that
+- **`claude_maratai/agents/web-research.md`** – external research assistant that
   prioritizes credible sources (forums, docs, DeepWiki) and records pros/cons and
   recommendations inside `docs/`.
-- **`claude_marat_ai/agents/plan-spec-reviewer.md`** – reviewer that compares an
+- **`claude_maratai/agents/plan-spec-reviewer.md`** – reviewer that compares an
   implementation plan against a specification, logs critical gaps, and calculates
   coverage metrics in a standalone markdown report.
 

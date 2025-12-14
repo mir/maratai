@@ -5,7 +5,7 @@
 # ///
 
 """
-Transfer markdown files from claude_marat_ai to opencode folders,
+Transfer markdown files from claude_maratai to opencode folders,
 removing the preamble (YAML frontmatter) from each file.
 """
 
@@ -107,11 +107,11 @@ def main():
     # Get script directory (project root)
     project_root = Path(__file__).parent
 
-    source_root = project_root / "claude_marat_ai"
+    source_root = project_root / "claude_maratai"
     target_root = project_root / "opencode"
 
     print("=" * 60)
-    print("Transferring files from claude_marat_ai to opencode")
+    print("Transferring files from claude_maratai to opencode")
     print("=" * 60)
     print(f"Source: {source_root}")
     print(f"Target: {target_root}")
