@@ -14,10 +14,20 @@ Jira API operations script.
 Uses MCP client to communicate with Atlassian MCP server.
 
 Commands:
-    get <KEY>         - Fetch a single issue with all details
-    search <JQL>      - Search issues using JQL
-    comments <KEY>    - Get comments for an issue
-    projects          - List accessible Jira projects
+    get <KEY>              - Fetch a single issue with all details
+    search <JQL>           - Search issues using JQL
+    comments <KEY>         - Get comments for an issue
+    projects               - List accessible Jira projects
+    types <PROJECT>        - List available issue types for a project
+    fields <PROJECT>       - List fields for an issue type
+    transitions <KEY>      - Get available transitions for an issue
+    comment <KEY> <BODY>   - Add a comment to an issue
+    transition <KEY> <STATUS> - Transition an issue to a new status
+    assign <KEY> <ID>      - Assign or unassign an issue
+    create <PROJECT>       - Create a new issue (supports --field)
+    edit <KEY>             - Edit an existing issue
+    me                     - Show current user info
+    lookup <QUERY>         - Lookup user by name or email
 """
 
 import argparse
@@ -30,6 +40,124 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from common import get_stored_value, yaml_output, error_output
 from mcp_client import AtlassianMCPClient, MCPError, AuthenticationError
+
+
+def parse_jira_error(error: Exception) -> dict:
+    """Parse MCP/Jira errors into user-friendly format."""
+    import re
+    error_str = str(error)
+    result = {"message": error_str}
+
+    # Parse MCP validation errors
+    if "Invalid arguments" in error_str:
+        try:
+            match = re.search(r'\[.*\]', error_str, re.DOTALL)
+            if match:
+                errors = json.loads(match.group())
+                fields = []
+                for e in errors:
+                    path = ".".join(e.get("path", []))
+                    fields.append(f"{path}: {e.get('message', 'invalid')}")
+                result["message"] = "Validation error"
+                result["fields"] = fields
+                result["hint"] = "Check parameter names and types"
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+
+    # Parse Jira API errors (Bad Request)
+    if "Bad Request" in error_str or '"errors"' in error_str:
+        found_details = False
+        try:
+            # Find JSON object containing errors
+            start = error_str.find('{"errorMessages"')
+            if start < 0:
+                start = error_str.find('{"errors"')
+            if start >= 0:
+                # Count braces to find matching close
+                depth = 0
+                end = start
+                for i, c in enumerate(error_str[start:], start):
+                    if c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+
+                json_str = error_str[start:end]
+                jira_error = json.loads(json_str)
+                errors = jira_error.get("errors", {})
+                messages = jira_error.get("errorMessages", [])
+
+                if errors:
+                    result["message"] = "Jira field errors"
+                    result["fields"] = [f"{k}: {v}" for k, v in errors.items()]
+                    found_details = True
+                if messages and any(messages):
+                    result["messages"] = messages
+                    found_details = True
+
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            pass
+
+        # Always add helpful context for Bad Request errors
+        if "Bad Request" in error_str:
+            if not found_details:
+                # Provide more context when we don't have specific field errors
+                if "edit" in error_str.lower() or "update" in error_str.lower():
+                    result["message"] = "Failed to edit issue - invalid field or value"
+                    result["possible_causes"] = [
+                        "Field name doesn't exist",
+                        "Field value has wrong type",
+                        "Field is not editable",
+                    ]
+                elif "create" in error_str.lower():
+                    result["message"] = "Failed to create issue - missing or invalid field"
+                    result["possible_causes"] = [
+                        "Required field missing",
+                        "Invalid issue type",
+                        "Field value has wrong format",
+                    ]
+            result["hint"] = "Run 'jira.py fields <PROJECT> --type <TYPE>' to see available fields"
+
+    return result
+
+
+def jira_error_output(error: Exception) -> None:
+    """Output parsed Jira error as YAML."""
+    import yaml
+    parsed = parse_jira_error(error)
+    # If we parsed additional info (fields, hint), output as structured error
+    if len(parsed) > 1:
+        yaml.dump({"error": parsed}, sys.stderr, default_flow_style=False, allow_unicode=True)
+        sys.exit(1)
+    else:
+        error_output(parsed.get("message", str(error)))
+
+
+def parse_mcp_result(result) -> tuple[dict | list | None, str | None]:
+    """
+    Parse MCP tool result, handling JSON strings and error responses.
+
+    Returns:
+        (parsed_result, error_message) - error_message is None if no error
+    """
+    # Parse JSON string if needed
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            # Check if it looks like an error message
+            if "Failed to" in result or "Error" in result:
+                return None, result
+            return None, f"Invalid response: {result[:100]}"
+
+    # Check for MCP error response format: {"error": true, "message": "..."}
+    if isinstance(result, dict) and result.get("error"):
+        return None, result.get("message", "Operation failed")
+
+    return result, None
 
 
 def get_cloud_id() -> str:
@@ -359,6 +487,569 @@ def cmd_projects(args):
             client.close()
 
 
+def cmd_transitions(args):
+    """Get available transitions for an issue via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        # Get current issue status first
+        issue_result = client.call_tool(
+            "getJiraIssue",
+            {"cloudId": cloud_id, "issueIdOrKey": args.key},
+        )
+        if isinstance(issue_result, str):
+            issue_result = json.loads(issue_result)
+        current_status = issue_result.get("fields", {}).get("status", {}).get("name")
+
+        # Get available transitions
+        result = client.call_tool(
+            "getTransitionsForJiraIssue",
+            {"cloudId": cloud_id, "issueIdOrKey": args.key},
+        )
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        transitions = result.get("transitions", [])
+
+        output = {
+            "transitions": {
+                "issue_key": args.key,
+                "current_status": current_status,
+                "total": len(transitions),
+                "items": [
+                    {
+                        "id": t.get("id"),
+                        "name": t.get("name"),
+                        "to_status": t.get("to", {}).get("name"),
+                    }
+                    for t in transitions
+                ],
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_comment(args):
+    """Add a comment to an issue via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        result = client.call_tool(
+            "addCommentToJiraIssue",
+            {
+                "cloudId": cloud_id,
+                "issueIdOrKey": args.key,
+                "commentBody": args.body,
+            },
+        )
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            jira_error_output(Exception(error_msg))
+            return
+
+        output = {
+            "comment": {
+                "issue_key": args.key,
+                "id": result.get("id"),
+                "author": result.get("author", {}).get("displayName"),
+                "created": result.get("created"),
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_transition(args):
+    """Transition an issue to a new status via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        # Get available transitions
+        result = client.call_tool(
+            "getTransitionsForJiraIssue",
+            {"cloudId": cloud_id, "issueIdOrKey": args.key},
+        )
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            jira_error_output(Exception(error_msg))
+            return
+
+        transitions = result.get("transitions", [])
+
+        # Find matching transition
+        target_transition = None
+
+        if args.id:
+            # Match by ID
+            for t in transitions:
+                if t.get("id") == args.id:
+                    target_transition = t
+                    break
+        else:
+            # Match by name (case-insensitive)
+            target_name = args.status.lower()
+            for t in transitions:
+                if t.get("name", "").lower() == target_name:
+                    target_transition = t
+                    break
+                # Also try matching the destination status name
+                if t.get("to", {}).get("name", "").lower() == target_name:
+                    target_transition = t
+                    break
+
+        if not target_transition:
+            available = [f"{t.get('name')} (id: {t.get('id')})" for t in transitions]
+            error_output(f"Transition not found. Available: {', '.join(available)}")
+            return
+
+        # Perform transition
+        result = client.call_tool(
+            "transitionJiraIssue",
+            {
+                "cloudId": cloud_id,
+                "issueIdOrKey": args.key,
+                "transition": {"id": target_transition.get("id")},
+            },
+        )
+        _, error_msg = parse_mcp_result(result)
+        if error_msg:
+            jira_error_output(Exception(error_msg))
+            return
+
+        output = {
+            "transition": {
+                "issue_key": args.key,
+                "to_status": target_transition.get("to", {}).get("name"),
+                "transition_name": target_transition.get("name"),
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_assign(args):
+    """Assign or unassign an issue via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        if args.unassign:
+            # Unassign the issue
+            assignee_id = None
+        elif args.me:
+            # Get current user's account ID
+            user_info = client.call_tool("atlassianUserInfo", {})
+            user_info, error_msg = parse_mcp_result(user_info)
+            if error_msg:
+                jira_error_output(Exception(error_msg))
+                return
+            assignee_id = user_info.get("account_id")
+        else:
+            assignee_id = args.account_id
+
+        # Update assignee using editJiraIssue
+        result = client.call_tool(
+            "editJiraIssue",
+            {
+                "cloudId": cloud_id,
+                "issueIdOrKey": args.key,
+                "fields": {"assignee": {"accountId": assignee_id} if assignee_id else None},
+            },
+        )
+        _, error_msg = parse_mcp_result(result)
+        if error_msg:
+            jira_error_output(Exception(error_msg))
+            return
+
+        if assignee_id:
+            output = {
+                "assign": {
+                    "issue_key": args.key,
+                    "assignee_id": assignee_id,
+                    "status": "assigned",
+                }
+            }
+        else:
+            output = {
+                "assign": {
+                    "issue_key": args.key,
+                    "status": "unassigned",
+                }
+            }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_create(args):
+    """Create a new Jira issue via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        # Build MCP tool arguments
+        tool_args = {
+            "cloudId": cloud_id,
+            "projectKey": args.project,
+            "issueTypeName": args.type,
+            "summary": args.summary,
+        }
+
+        # Optional fields
+        if args.description:
+            tool_args["description"] = args.description
+
+        if args.labels:
+            tool_args["labels"] = [l.strip() for l in args.labels.split(",")]
+
+        if args.assignee:
+            tool_args["assigneeAccountId"] = args.assignee
+
+        if args.parent:
+            tool_args["parentKey"] = args.parent
+
+        # Custom fields via --field option
+        if args.field:
+            extra_fields = {}
+            for field_spec in args.field:
+                if "=" in field_spec:
+                    name, value = field_spec.split("=", 1)
+                    extra_fields[name.strip()] = value.strip()
+            if extra_fields:
+                tool_args["extraFields"] = extra_fields
+
+        # Create issue
+        result = client.call_tool("createJiraIssue", tool_args)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            jira_error_output(Exception(error_msg))
+            return
+
+        output = {
+            "created": {
+                "key": result.get("key"),
+                "id": result.get("id"),
+                "type": args.type,
+                "summary": args.summary,
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        jira_error_output(e)
+    except Exception as e:
+        jira_error_output(e)
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_edit(args):
+    """Edit an existing Jira issue via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        # Build fields to update
+        fields = {}
+
+        if args.summary:
+            fields["summary"] = args.summary
+
+        if args.description:
+            fields["description"] = args.description
+
+        # Custom fields via --field option
+        if args.field:
+            for field_spec in args.field:
+                if "=" in field_spec:
+                    name, value = field_spec.split("=", 1)
+                    fields[name.strip()] = value.strip()
+
+        if not fields:
+            error_output("No fields to update. Use --summary, --description, or --field")
+            return
+
+        # Edit issue
+        result = client.call_tool(
+            "editJiraIssue",
+            {
+                "cloudId": cloud_id,
+                "issueIdOrKey": args.key,
+                "fields": fields,
+            },
+        )
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            jira_error_output(Exception(error_msg))
+            return
+
+        output = {
+            "edited": {
+                "key": args.key,
+                "fields_updated": list(fields.keys()),
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        jira_error_output(e)
+    except Exception as e:
+        jira_error_output(e)
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_types(args):
+    """List available issue types for a project via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        result = client.call_tool(
+            "getJiraProjectIssueTypesMetadata",
+            {"cloudId": cloud_id, "projectIdOrKey": args.project},
+        )
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        issue_types = result.get("issueTypes", [])
+
+        output = {
+            "types": {
+                "project": args.project,
+                "total": len(issue_types),
+                "items": [
+                    {
+                        "id": t.get("id"),
+                        "name": t.get("name"),
+                        "subtask": t.get("subtask", False),
+                        "description": t.get("description", "")[:50],
+                    }
+                    for t in issue_types
+                ],
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_fields(args):
+    """List fields for a project and issue type via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        # First get the issue type ID from name
+        types_result = client.call_tool(
+            "getJiraProjectIssueTypesMetadata",
+            {"cloudId": cloud_id, "projectIdOrKey": args.project},
+        )
+        if isinstance(types_result, str):
+            types_result = json.loads(types_result)
+
+        issue_type_id = None
+        for t in types_result.get("issueTypes", []):
+            if t.get("name", "").lower() == args.type.lower():
+                issue_type_id = t.get("id")
+                break
+
+        if not issue_type_id:
+            available = [t.get("name") for t in types_result.get("issueTypes", [])]
+            error_output(f"Issue type '{args.type}' not found. Available: {', '.join(available)}")
+            return
+
+        # Get field metadata
+        result = client.call_tool(
+            "getJiraIssueTypeMetaWithFields",
+            {
+                "cloudId": cloud_id,
+                "projectIdOrKey": args.project,
+                "issueTypeId": issue_type_id,
+            },
+        )
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        fields = result.get("fields", [])
+
+        # Sort: required first, then by name
+        fields_sorted = sorted(fields, key=lambda f: (not f.get("required", False), f.get("name", "")))
+
+        output = {
+            "fields": {
+                "project": args.project,
+                "issue_type": args.type,
+                "total": len(fields),
+                "items": [
+                    {
+                        "name": f.get("name"),
+                        "key": f.get("key"),
+                        "required": f.get("required", False),
+                        "type": f.get("schema", {}).get("type", "unknown"),
+                    }
+                    for f in fields_sorted
+                ],
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        jira_error_output(e)
+    except Exception as e:
+        jira_error_output(e)
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_me(args):
+    """Show current user info via MCP."""
+    client = None
+    try:
+        client = AtlassianMCPClient()
+
+        result = client.call_tool("atlassianUserInfo", {})
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        output = {
+            "user": {
+                "account_id": result.get("account_id"),
+                "name": result.get("name"),
+                "email": result.get("email"),
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
+def cmd_lookup(args):
+    """Lookup user by name or email via MCP."""
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        result = client.call_tool(
+            "lookupJiraAccountId",
+            {"cloudId": cloud_id, "searchString": args.query},
+        )
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        # Extract users from nested structure: result.users.users
+        users_data = result.get("users", {})
+        users = users_data.get("users", []) if isinstance(users_data, dict) else []
+
+        output = {
+            "lookup": {
+                "query": args.query,
+                "total": len(users),
+                "users": [
+                    {
+                        "account_id": u.get("accountId"),
+                        "name": u.get("displayName"),
+                    }
+                    for u in users
+                ],
+            }
+        }
+
+        yaml_output(output)
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Jira API operations (via MCP)",
@@ -390,6 +1081,63 @@ def main():
         "--limit", "-l", type=int, default=50, help="Max results (default: 50)"
     )
 
+    # transitions command
+    transitions_parser = subparsers.add_parser("transitions", help="Get available transitions for an issue")
+    transitions_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
+
+    # comment command
+    comment_parser = subparsers.add_parser("comment", help="Add a comment to an issue")
+    comment_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
+    comment_parser.add_argument("body", help="Comment text")
+
+    # transition command
+    transition_parser = subparsers.add_parser("transition", help="Transition an issue to a new status")
+    transition_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
+    transition_parser.add_argument("status", nargs="?", help="Target status name (e.g., 'In Progress')")
+    transition_parser.add_argument("--id", help="Transition ID (alternative to status name)")
+
+    # assign command
+    assign_parser = subparsers.add_parser("assign", help="Assign or unassign an issue")
+    assign_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
+    assign_parser.add_argument("account_id", nargs="?", help="Account ID to assign to")
+    assign_parser.add_argument("--me", action="store_true", help="Assign to yourself")
+    assign_parser.add_argument("--unassign", action="store_true", help="Remove assignee")
+
+    # create command
+    create_parser = subparsers.add_parser("create", help="Create a new issue")
+    create_parser.add_argument("project", help="Project key (e.g., PROJ)")
+    create_parser.add_argument("--type", "-t", required=True, help="Issue type (e.g., Story, Bug, Task)")
+    create_parser.add_argument("--summary", "-s", required=True, help="Issue summary/title")
+    create_parser.add_argument("--description", "-d", help="Issue description")
+    create_parser.add_argument("--priority", "-p", help="Priority (e.g., High, Medium, Low)")
+    create_parser.add_argument("--labels", help="Comma-separated labels")
+    create_parser.add_argument("--assignee", "-a", help="Assignee account ID")
+    create_parser.add_argument("--parent", help="Parent issue key (for subtasks)")
+    create_parser.add_argument("--field", "-f", action="append", help="Custom field: 'Name=value' (repeatable)")
+
+    # edit command
+    edit_parser = subparsers.add_parser("edit", help="Edit an existing issue")
+    edit_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
+    edit_parser.add_argument("--summary", "-s", help="New summary/title")
+    edit_parser.add_argument("--description", "-d", help="New description")
+    edit_parser.add_argument("--field", "-f", action="append", help="Field to update: 'Name=value' (repeatable)")
+
+    # types command
+    types_parser = subparsers.add_parser("types", help="List available issue types for a project")
+    types_parser.add_argument("project", help="Project key (e.g., PROJ)")
+
+    # fields command
+    fields_parser = subparsers.add_parser("fields", help="List fields for a project and issue type")
+    fields_parser.add_argument("project", help="Project key (e.g., PROJ)")
+    fields_parser.add_argument("--type", "-t", required=True, help="Issue type (e.g., Story, Bug)")
+
+    # me command
+    subparsers.add_parser("me", help="Show current user info")
+
+    # lookup command
+    lookup_parser = subparsers.add_parser("lookup", help="Lookup user by name or email")
+    lookup_parser.add_argument("query", help="User name or email to search")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -401,6 +1149,16 @@ def main():
         "search": cmd_search,
         "comments": cmd_comments,
         "projects": cmd_projects,
+        "transitions": cmd_transitions,
+        "comment": cmd_comment,
+        "transition": cmd_transition,
+        "assign": cmd_assign,
+        "create": cmd_create,
+        "edit": cmd_edit,
+        "types": cmd_types,
+        "fields": cmd_fields,
+        "me": cmd_me,
+        "lookup": cmd_lookup,
     }
 
     commands[args.command](args)

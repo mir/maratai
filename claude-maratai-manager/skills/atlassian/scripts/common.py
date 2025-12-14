@@ -222,6 +222,12 @@ class AtlassianClient:
             response = client.post(url, headers=self._get_headers(), json=json_data)
             return self._handle_response(response)
 
+    def put(self, url: str, json_data: dict | None = None) -> dict | list:
+        """Make PUT request to Atlassian API."""
+        with httpx.Client(timeout=30.0) as client:
+            response = client.put(url, headers=self._get_headers(), json=json_data)
+            return self._handle_response(response)
+
     # Jira convenience methods
     def jira_get(self, endpoint: str, params: dict | None = None) -> dict | list:
         """GET request to Jira API."""
@@ -230,6 +236,10 @@ class AtlassianClient:
     def jira_post(self, endpoint: str, json_data: dict | None = None) -> dict | list:
         """POST request to Jira API."""
         return self.post(f"{self.jira_base}{endpoint}", json_data)
+
+    def jira_put(self, endpoint: str, json_data: dict | None = None) -> dict | list:
+        """PUT request to Jira API."""
+        return self.put(f"{self.jira_base}{endpoint}", json_data)
 
     # Confluence convenience methods
     def confluence_get(self, endpoint: str, params: dict | None = None) -> dict | list:

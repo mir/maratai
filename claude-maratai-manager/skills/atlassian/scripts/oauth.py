@@ -52,6 +52,7 @@ DEFAULT_SCOPES = [
     "read:confluence-content.all",
     "read:confluence-space.summary",
     "read:confluence-user",
+    "write:jira-work",  # Create/edit issues, post comments, transitions
     "offline_access",  # Needed for refresh tokens
 ]
 

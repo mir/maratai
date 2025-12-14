@@ -49,6 +49,76 @@ uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py commen
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py projects
 ```
 
+### Add comment to ticket
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py comment PROJ-123 "This is my comment"
+```
+
+### Get available transitions
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py transitions PROJ-123
+```
+
+### Transition ticket status
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py transition PROJ-123 "In Progress"
+# Or by transition ID
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py transition PROJ-123 --id 21
+```
+
+### Create ticket
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py create PROJ --type Story --summary "My new story"
+# With more options
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py create PROJ --type Bug --summary "Bug title" --description "Details here" --priority High --labels "bug,urgent"
+# With custom fields (for project-specific required fields)
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py create PROJ --type Story --summary "My story" --field "Story Points=5" --field "Team=Platform"
+```
+
+### Edit ticket
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py edit PROJ-123 --summary "Updated title"
+# Update multiple fields
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py edit PROJ-123 --summary "New title" --description "New description"
+# Update custom fields
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py edit PROJ-123 --field "Story Points=8" --field "customfield_10001=value"
+```
+
+### Assign ticket
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py assign PROJ-123 <account_id>
+# Assign to yourself
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py assign PROJ-123 --me
+# Unassign
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py assign PROJ-123 --unassign
+```
+
+### List issue types for a project
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py types PROJ
+```
+
+Issue types vary by project (e.g., Story, Bug, Epic, Task, Experiment).
+
+### List fields for an issue type
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py fields PROJ --type Story
+```
+
+Shows all available fields for an issue type, with required fields listed first. Use this to discover custom fields before creating or editing issues.
+
+### Get current user info
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py me
+```
+
+Returns your account_id (useful for assignments).
+
+### Lookup user by name or email
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py lookup "John Doe"
+```
+
 ## Confluence Commands
 
 ### Fetch a page
@@ -91,6 +161,13 @@ Check if authenticated:
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py status
 ```
 
+## Write Operations Note
+
+Write operations (comment, transition, create, edit, assign) require the `write:jira-work` OAuth scope. If you previously authenticated with read-only permissions, re-run:
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py login
+```
+
 ## Example Output
 
 ### Jira Issue
@@ -128,6 +205,76 @@ page:
   updated: "2024-01-18T15:30:00Z"
 ```
 
+### Transitions
+```yaml
+transitions:
+  issue_key: PROJ-123
+  current_status: To Do
+  total: 2
+  items:
+    - {id: "21", name: Start Progress, to_status: In Progress}
+    - {id: "31", name: Done, to_status: Done}
+```
+
+### Comment Added
+```yaml
+comment:
+  issue_key: PROJ-123
+  id: "10567"
+  author: John Doe
+  created: "2024-01-15T10:30:00Z"
+```
+
+### Issue Created
+```yaml
+created:
+  key: PROJ-456
+  id: "10234"
+  type: Story
+  summary: My new story
+```
+
+### Issue Types
+```yaml
+types:
+  project: PROJ
+  total: 5
+  items:
+    - {id: "10000", name: Epic, subtask: false}
+    - {id: "10037", name: Story, subtask: false}
+    - {id: "10166", name: Bug, subtask: false}
+```
+
+### Issue Fields
+```yaml
+fields:
+  project: PROJ
+  issue_type: Story
+  total: 12
+  items:
+    - {name: Summary, key: summary, required: true, type: string}
+    - {name: Story Points, key: customfield_10001, required: true, type: number}
+    - {name: Description, key: description, required: false, type: string}
+    - {name: Labels, key: labels, required: false, type: array}
+```
+
+### Issue Edited
+```yaml
+edited:
+  key: PROJ-123
+  fields_updated:
+    - summary
+    - description
+```
+
+### User Info
+```yaml
+user:
+  account_id: "712020:abc123..."
+  name: John Doe
+  email: john.doe@example.com
+```
+
 ## Troubleshooting
 
 ### "Not authenticated" error
@@ -138,3 +285,22 @@ Run the login command again to re-authenticate. OAuth tokens auto-refresh, but r
 
 ### "No cloud ID" error
 Re-authenticate by running the login command shown in Setup above.
+
+### "Permission denied" on write operations
+Your OAuth token may lack write permissions. Re-authenticate to get new permissions:
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/auth.py login
+```
+
+### "Transition not found" error
+The target status is not available from the current issue status. Use `transitions` command to see available options.
+
+### "Required field missing" or field validation errors
+Projects often have custom required fields (e.g., Story Points, Team). To discover required fields:
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py fields PROJ --type Story
+```
+Then add the required fields using `--field`:
+```bash
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py create PROJ --type Story --summary "Title" --field "customfield_10001=5"
+```
