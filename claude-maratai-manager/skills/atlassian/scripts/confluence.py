@@ -18,6 +18,8 @@ Commands:
     search <CQL>          - Search pages using CQL
     children <PAGE_ID>    - Get child pages
     spaces                - List Confluence spaces
+    ancestors <PAGE_ID>   - Get parent pages
+    export <CQL>          - Export pages to yaml/json/markdown files
 """
 
 import argparse
@@ -140,6 +142,56 @@ def format_page(page: dict, include_content: bool = True) -> dict:
             result["content"] = html_to_text(content_value)
 
     return result
+
+
+def format_page_markdown(page: dict) -> str:
+    """Format page as markdown document."""
+    def get_user_name(user_obj):
+        if not user_obj:
+            return "N/A"
+        if isinstance(user_obj, dict):
+            return user_obj.get("name", "N/A")
+        return str(user_obj)
+
+    lines = [
+        f"# {page.get('title', 'Untitled')}",
+        "",
+    ]
+
+    # Metadata
+    if page.get("id"):
+        lines.append(f"**Page ID:** {page['id']}  ")
+    if page.get("status"):
+        lines.append(f"**Status:** {page['status']}  ")
+    if page.get("space"):
+        space = page["space"]
+        if isinstance(space, dict):
+            space_info = f"{space.get('name', '')} ({space.get('key', '')})" if space.get('name') else space.get('key', space.get('id', ''))
+        else:
+            space_info = str(space)
+        lines.append(f"**Space:** {space_info}  ")
+    if page.get("author"):
+        lines.append(f"**Author:** {get_user_name(page.get('author'))}  ")
+    if page.get("updated"):
+        lines.append(f"**Updated:** {page['updated']}  ")
+    if page.get("version"):
+        lines.append(f"**Version:** {page['version']}  ")
+
+    # Ancestors (breadcrumb)
+    if page.get("ancestors"):
+        breadcrumb = " > ".join([a.get("title", a.get("id", "")) for a in page["ancestors"]])
+        lines.append(f"**Path:** {breadcrumb}  ")
+
+    lines.extend(["", "---", ""])
+
+    # Content
+    if page.get("content"):
+        lines.append(page["content"])
+    else:
+        lines.append("_No content_")
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 def cmd_get(args):
@@ -384,6 +436,115 @@ def cmd_ancestors(args):
             client.close()
 
 
+def cmd_export(args):
+    """Export pages matching CQL query to files or stdout."""
+    import os
+
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        # Search for pages using CQL
+        result = client.call_tool(
+            "searchConfluenceUsingCql",
+            {
+                "cloudId": cloud_id,
+                "cql": args.cql,
+                "maxResults": args.limit,
+            },
+        )
+
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        search_results = result.get("results", [])
+        if not search_results:
+            error_output("No pages found matching the query")
+            return
+
+        # Fetch full details for each page
+        exported_pages = []
+        for p in search_results:
+            content = p.get("content", {})
+            page_id = content.get("id")
+            if not page_id:
+                continue
+            try:
+                full_page = client.call_tool(
+                    "getConfluencePage",
+                    {
+                        "cloudId": cloud_id,
+                        "pageId": page_id,
+                        "includeBody": True,
+                    },
+                )
+                if isinstance(full_page, str):
+                    full_page = json.loads(full_page)
+                formatted = format_page(full_page, include_content=True)
+                exported_pages.append(formatted)
+            except Exception as e:
+                print(f"Warning: Could not fetch page {page_id}: {e}", file=sys.stderr)
+
+        if not exported_pages:
+            error_output("Failed to fetch any pages")
+            return
+
+        # Output based on format
+        if args.output_dir:
+            os.makedirs(args.output_dir, exist_ok=True)
+
+            ext_map = {"yaml": "yaml", "json": "json", "markdown": "md"}
+            ext = ext_map.get(args.format, "yaml")
+
+            for page in exported_pages:
+                # Sanitize title for filename
+                title = page.get("title", page.get("id", "untitled"))
+                safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:50]
+                filename = f"{safe_title}_{page.get('id', '')}.{ext}"
+                filepath = os.path.join(args.output_dir, filename)
+
+                if args.format == "markdown":
+                    content = format_page_markdown(page)
+                elif args.format == "json":
+                    content = json.dumps(page, indent=2)
+                else:  # yaml
+                    content = yaml.dump({"page": page}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+                with open(filepath, "w") as f:
+                    f.write(content)
+
+            output = {
+                "export": {
+                    "total": len(exported_pages),
+                    "format": args.format,
+                    "output_dir": args.output_dir,
+                    "files": [f"{re.sub(r'[^\\w\\s-]', '', p.get('title', p.get('id', 'untitled'))).strip().replace(' ', '_')[:50]}_{p.get('id', '')}.{ext}" for p in exported_pages],
+                }
+            }
+            yaml_output(output)
+        else:
+            # Output to stdout
+            if args.format == "markdown":
+                for page in exported_pages:
+                    print(format_page_markdown(page))
+                    print("\n---\n")
+            elif args.format == "json":
+                print(json.dumps({"pages": exported_pages}, indent=2))
+            else:  # yaml
+                print(yaml.dump({"pages": exported_pages}, default_flow_style=False, allow_unicode=True, sort_keys=False))
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Confluence API operations (via MCP)",
@@ -419,6 +580,20 @@ def main():
     ancestors_parser = subparsers.add_parser("ancestors", help="Get parent pages")
     ancestors_parser.add_argument("page_id", help="Page ID")
 
+    # export command
+    export_parser = subparsers.add_parser("export", help="Export pages matching CQL query")
+    export_parser.add_argument("cql", help="CQL query string")
+    export_parser.add_argument(
+        "--format", "-f", choices=["yaml", "json", "markdown"], default="yaml",
+        help="Output format (default: yaml)"
+    )
+    export_parser.add_argument(
+        "--output-dir", "-o", help="Directory to save files (one per page)"
+    )
+    export_parser.add_argument(
+        "--limit", "-l", type=int, default=50, help="Max pages to export (default: 50)"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -431,6 +606,7 @@ def main():
         "children": cmd_children,
         "spaces": cmd_spaces,
         "ancestors": cmd_ancestors,
+        "export": cmd_export,
     }
 
     commands[args.command](args)

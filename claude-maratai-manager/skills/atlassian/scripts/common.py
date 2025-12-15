@@ -250,11 +250,27 @@ class AtlassianClient:
 def yaml_output(data: Any, stream=sys.stdout) -> None:
     """
     Output data as YAML to stdout.
-    Uses compact flow style for simple nested structures.
+    Uses pure block style for all structures (no inline JSON-like formatting).
     """
+    # Custom representer to force block style for dicts
+    def represent_dict(dumper, data):
+        return dumper.represent_mapping('tag:yaml.org,2002:map', data.items(), flow_style=False)
+
+    # Custom representer to force block style for lists
+    def represent_list(dumper, data):
+        return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=False)
+
+    # Create custom dumper class
+    class BlockStyleDumper(yaml.SafeDumper):
+        pass
+
+    BlockStyleDumper.add_representer(dict, represent_dict)
+    BlockStyleDumper.add_representer(list, represent_list)
+
     yaml.dump(
         data,
         stream,
+        Dumper=BlockStyleDumper,
         default_flow_style=False,
         allow_unicode=True,
         sort_keys=False,

@@ -28,6 +28,7 @@ Commands:
     edit <KEY>             - Edit an existing issue
     me                     - Show current user info
     lookup <QUERY>         - Lookup user by name or email
+    export <JQL>           - Export issues to yaml/json/markdown files
 """
 
 import argparse
@@ -234,7 +235,7 @@ def format_issue(issue: dict, include_comments: bool = True) -> dict:
         if comments:
             result["comments"] = [
                 {
-                    "author": format_user(c.get("author")).get("name") if c.get("author") else None,
+                    "author": format_user(c.get("author")),
                     "created": c.get("created"),
                     "body": extract_text_from_adf(c.get("body")) if isinstance(c.get("body"), dict) else c.get("body"),
                 }
@@ -255,6 +256,59 @@ def format_issue(issue: dict, include_comments: bool = True) -> dict:
         ]
 
     return result
+
+
+def format_issue_markdown(issue: dict) -> str:
+    """Format issue as markdown document."""
+    def get_user_name(user_obj):
+        if not user_obj:
+            return "N/A"
+        if isinstance(user_obj, dict):
+            return user_obj.get("name", "N/A")
+        return str(user_obj)
+
+    lines = [
+        f"# {issue['key']}: {issue['summary']}",
+        "",
+        f"**Type:** {issue.get('type', 'N/A')}  ",
+        f"**Status:** {issue.get('status', 'N/A')}  ",
+        f"**Priority:** {issue.get('priority', 'None')}  ",
+        f"**Author:** {get_user_name(issue.get('author'))}  ",
+        f"**Assignee:** {get_user_name(issue.get('assignee')) if issue.get('assignee') else 'Unassigned'}  ",
+        f"**Created:** {issue.get('created', 'N/A')}  ",
+        f"**Updated:** {issue.get('updated', 'N/A')}  ",
+    ]
+
+    # Parent link
+    if issue.get("parent"):
+        lines.append(f"**Parent:** {issue['parent'].get('key', '')} - {issue['parent'].get('summary', '')}  ")
+
+    # Labels
+    if issue.get("labels"):
+        lines.append(f"**Labels:** {', '.join(issue['labels'])}  ")
+
+    lines.extend(["", "## Description", ""])
+    lines.append(issue.get("description") or "_No description_")
+    lines.append("")
+
+    # Comments
+    if issue.get("comments"):
+        lines.extend(["## Comments", ""])
+        for c in issue["comments"]:
+            author = get_user_name(c.get("author"))
+            lines.append(f"### {author} - {c.get('created', 'Unknown date')}")
+            lines.append("")
+            lines.append(c.get("body") or "_Empty comment_")
+            lines.append("")
+
+    # Attachments
+    if issue.get("attachments"):
+        lines.extend(["## Attachments", ""])
+        for a in issue["attachments"]:
+            lines.append(f"- {a.get('filename', 'Unknown')} ({a.get('size', 0)} bytes)")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def extract_text_from_adf(adf: dict) -> str:
@@ -358,7 +412,7 @@ def cmd_search(args):
             # Assignee
             assignee = fields.get("assignee")
             if assignee:
-                issue_info["assignee"] = assignee.get("displayName")
+                issue_info["assignee"] = format_user(assignee)
 
             # Created date
             if fields.get("created"):
@@ -414,7 +468,7 @@ def cmd_comments(args):
                 "items": [
                     {
                         "id": c.get("id"),
-                        "author": format_user(c.get("author")).get("name") if c.get("author") else None,
+                        "author": format_user(c.get("author")),
                         "created": c.get("created"),
                         "updated": c.get("updated"),
                         "body": extract_text_from_adf(c.get("body")) if isinstance(c.get("body"), dict) else c.get("body"),
@@ -566,7 +620,7 @@ def cmd_comment(args):
             "comment": {
                 "issue_key": args.key,
                 "id": result.get("id"),
-                "author": result.get("author", {}).get("displayName"),
+                "author": format_user(result.get("author")),
                 "created": result.get("created"),
             }
         }
@@ -1050,6 +1104,112 @@ def cmd_lookup(args):
             client.close()
 
 
+def cmd_export(args):
+    """Export issues matching JQL query to files or stdout."""
+    import os
+
+    client = None
+    try:
+        cloud_id = get_cloud_id()
+        client = AtlassianMCPClient()
+
+        # Search for issues using JQL
+        result = client.call_tool(
+            "searchJiraIssuesUsingJql",
+            {
+                "cloudId": cloud_id,
+                "jql": args.jql,
+                "limit": args.limit,
+            },
+        )
+
+        if isinstance(result, str):
+            result = json.loads(result)
+
+        issues = result.get("issues", [])
+        if not issues:
+            error_output("No issues found matching the query")
+            return
+
+        # Fetch full details for each issue
+        exported_issues = []
+        for issue in issues:
+            issue_key = issue.get("key")
+            try:
+                full_issue = client.call_tool(
+                    "getJiraIssue",
+                    {
+                        "cloudId": cloud_id,
+                        "issueIdOrKey": issue_key,
+                    },
+                )
+                if isinstance(full_issue, str):
+                    full_issue = json.loads(full_issue)
+                formatted = format_issue(full_issue, include_comments=True)
+                exported_issues.append(formatted)
+            except Exception as e:
+                # Log error but continue with other issues
+                print(f"Warning: Could not fetch {issue_key}: {e}", file=sys.stderr)
+
+        if not exported_issues:
+            error_output("Failed to fetch any issues")
+            return
+
+        # Output based on format
+        if args.output_dir:
+            # Create output directory if needed
+            os.makedirs(args.output_dir, exist_ok=True)
+
+            ext_map = {"yaml": "yaml", "json": "json", "markdown": "md"}
+            ext = ext_map.get(args.format, "yaml")
+
+            for issue in exported_issues:
+                filename = f"{issue['key']}.{ext}"
+                filepath = os.path.join(args.output_dir, filename)
+
+                if args.format == "markdown":
+                    content = format_issue_markdown(issue)
+                elif args.format == "json":
+                    content = json.dumps(issue, indent=2)
+                else:  # yaml
+                    import yaml
+                    content = yaml.dump({"issue": issue}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+                with open(filepath, "w") as f:
+                    f.write(content)
+
+            output = {
+                "export": {
+                    "total": len(exported_issues),
+                    "format": args.format,
+                    "output_dir": args.output_dir,
+                    "files": [f"{i['key']}.{ext}" for i in exported_issues],
+                }
+            }
+            yaml_output(output)
+        else:
+            # Output to stdout
+            if args.format == "markdown":
+                for issue in exported_issues:
+                    print(format_issue_markdown(issue))
+                    print("\n---\n")
+            elif args.format == "json":
+                print(json.dumps({"issues": exported_issues}, indent=2))
+            else:  # yaml
+                import yaml
+                print(yaml.dump({"issues": exported_issues}, default_flow_style=False, allow_unicode=True, sort_keys=False))
+
+    except AuthenticationError as e:
+        error_output(str(e))
+    except MCPError as e:
+        error_output(f"MCP error: {e}")
+    except Exception as e:
+        error_output(str(e))
+    finally:
+        if client:
+            client.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Jira API operations (via MCP)",
@@ -1138,6 +1298,20 @@ def main():
     lookup_parser = subparsers.add_parser("lookup", help="Lookup user by name or email")
     lookup_parser.add_argument("query", help="User name or email to search")
 
+    # export command
+    export_parser = subparsers.add_parser("export", help="Export issues matching JQL query")
+    export_parser.add_argument("jql", help="JQL query string")
+    export_parser.add_argument(
+        "--format", "-f", choices=["yaml", "json", "markdown"], default="yaml",
+        help="Output format (default: yaml)"
+    )
+    export_parser.add_argument(
+        "--output-dir", "-o", help="Directory to save files (one per issue)"
+    )
+    export_parser.add_argument(
+        "--limit", "-l", type=int, default=50, help="Max issues to export (default: 50)"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1159,6 +1333,7 @@ def main():
         "fields": cmd_fields,
         "me": cmd_me,
         "lookup": cmd_lookup,
+        "export": cmd_export,
     }
 
     commands[args.command](args)

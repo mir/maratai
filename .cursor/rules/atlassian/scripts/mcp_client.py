@@ -172,13 +172,16 @@ class AtlassianMCPClient:
 
         return self.session_id
 
-    def _send_request(self, method: str, params: dict | None = None) -> dict:
+    def _send_request_impl(self, method: str, params: dict | None = None,
+                           request_id: int | None = None, timeout: float = 30.0) -> dict:
         """
-        Send JSON-RPC request to MCP server.
+        Send JSON-RPC request to MCP server (implementation).
 
         Args:
             method: MCP method name (e.g., "tools/list", "tools/call")
             params: Method parameters
+            request_id: Request ID (generated if not provided)
+            timeout: Timeout for waiting for response
 
         Returns:
             JSON-RPC result
@@ -191,7 +194,8 @@ class AtlassianMCPClient:
         if not self.session_id:
             self.connect()
 
-        request_id = self._next_id()
+        if request_id is None:
+            request_id = self._next_id()
         payload = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -249,7 +253,7 @@ class AtlassianMCPClient:
 
             # 202 Accepted - wait for response via SSE
             if response.status_code == 202:
-                return self._wait_for_response(request_id)
+                return self._wait_for_response(request_id, timeout=timeout)
 
             raise ProtocolError(f"Unexpected content type: {content_type}")
 
@@ -290,6 +294,57 @@ class AtlassianMCPClient:
                     raise ProtocolError(f"JSON-RPC error: {msg['error']}")
             time.sleep(0.1)
         raise ProtocolError(f"Timeout waiting for response to request {request_id}")
+
+    def _send_request_with_retry(self, method: str, params: dict | None = None) -> dict:
+        """
+        Send request with automatic retry on timeout.
+
+        First attempt: 2 second timeout (fast fail for connection issues)
+        On timeout: Check auth, reconnect, retry with 20 second timeout
+        """
+        # First attempt with short timeout
+        try:
+            return self._send_request_impl(method, params, timeout=2.0)
+        except ProtocolError as e:
+            if "Timeout" not in str(e):
+                raise  # Re-raise non-timeout errors
+
+            # Timeout occurred - try to recover
+            print("Connection timeout, reconnecting...", file=sys.stderr)
+
+            # Check auth status
+            try:
+                self.token = get_valid_token()
+            except AuthenticationError:
+                raise AuthenticationError(
+                    "Authentication expired during retry. Run 'auth.py login'"
+                )
+
+            # Reset connection state and reconnect
+            self.close()
+            self.session_id = None
+            self._session_url = None
+            self._initialized = False
+            self._responses = {}
+
+            # Reinitialize
+            self.initialize()
+
+            # Retry with longer timeout
+            try:
+                return self._send_request_impl(method, params, timeout=20.0)
+            except ProtocolError as retry_error:
+                if "Timeout" in str(retry_error):
+                    raise ProtocolError(
+                        f"Request timed out after retry. "
+                        f"The Atlassian MCP server may be slow or unavailable. "
+                        f"Method: {method}"
+                    )
+                raise
+
+    def _send_request(self, method: str, params: dict | None = None) -> dict:
+        """Send request with automatic retry on timeout."""
+        return self._send_request_with_retry(method, params)
 
     def close(self):
         """Close the SSE connection."""

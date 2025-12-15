@@ -44,6 +44,20 @@ Common JQL examples:
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py comments PROJ-123
 ```
 
+### Export issues to files
+```bash
+# Export to markdown files
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py export "project=DEMO" --format markdown --output-dir ./exports/
+
+# Export to stdout (yaml default)
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py export "project=DEMO"
+
+# Export to JSON
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py export "project=DEMO" --format json
+```
+
+Formats: yaml (default), json, markdown. Without --output-dir, outputs to stdout.
+
 ### List projects
 ```bash
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/jira.py projects
@@ -154,6 +168,20 @@ uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py 
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py ancestors 123456789
 ```
 
+### Export pages to files
+```bash
+# Export to markdown files
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py export "space=TEAM" --format markdown --output-dir ./exports/
+
+# Export to stdout (yaml default)
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py export "type=page AND title~'architecture'"
+
+# Export to JSON
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/atlassian scripts/confluence.py export "space=TEAM" --format json
+```
+
+Formats: yaml (default), json, markdown. Without --output-dir, outputs to stdout.
+
 ## Authentication Status
 
 Check if authenticated:
@@ -181,13 +209,24 @@ issue:
   description: |
     Full description text...
   created: "2024-01-15T10:30:00Z"
-  author: {name: John Doe, account_id: "5f9e8d7c"}
-  assignee: {name: Jane Smith, account_id: "5f9e8d7d"}
-  parent: {key: PROJ-100, summary: "Epic: Auth"}
+  author:
+    name: John Doe
+    account_id: "5f9e8d7c"
+  assignee:
+    name: Jane Smith
+    account_id: "5f9e8d7d"
+  parent:
+    key: PROJ-100
+    summary: "Epic: Auth"
   comments:
-    - {author: John Doe, created: "2024-01-15T11:00:00Z", body: "Started work"}
+    - author:
+        name: John Doe
+        account_id: "5f9e8d7c"
+      created: "2024-01-15T11:00:00Z"
+      body: "Started work"
   attachments:
-    - {filename: screenshot.png, size: 45678}
+    - filename: screenshot.png
+      size: 45678
 ```
 
 ### Confluence Page
@@ -195,13 +234,18 @@ issue:
 page:
   id: "123456789"
   title: Architecture Overview
-  space: {key: TEAM, name: Team Space}
+  space:
+    key: TEAM
+    name: Team Space
   content: |
     ## Architecture
     This document describes...
   ancestors:
-    - {id: "123456780", title: Documentation}
-  author: {name: Alice, account_id: "5f9e8d7e"}
+    - id: "123456780"
+      title: Documentation
+  author:
+    name: Alice
+    account_id: "5f9e8d7e"
   updated: "2024-01-18T15:30:00Z"
 ```
 
@@ -212,8 +256,12 @@ transitions:
   current_status: To Do
   total: 2
   items:
-    - {id: "21", name: Start Progress, to_status: In Progress}
-    - {id: "31", name: Done, to_status: Done}
+    - id: "21"
+      name: Start Progress
+      to_status: In Progress
+    - id: "31"
+      name: Done
+      to_status: Done
 ```
 
 ### Comment Added
@@ -221,7 +269,9 @@ transitions:
 comment:
   issue_key: PROJ-123
   id: "10567"
-  author: John Doe
+  author:
+    name: John Doe
+    account_id: "5f9e8d7c"
   created: "2024-01-15T10:30:00Z"
 ```
 
@@ -240,9 +290,15 @@ types:
   project: PROJ
   total: 5
   items:
-    - {id: "10000", name: Epic, subtask: false}
-    - {id: "10037", name: Story, subtask: false}
-    - {id: "10166", name: Bug, subtask: false}
+    - id: "10000"
+      name: Epic
+      subtask: false
+    - id: "10037"
+      name: Story
+      subtask: false
+    - id: "10166"
+      name: Bug
+      subtask: false
 ```
 
 ### Issue Fields
@@ -252,10 +308,22 @@ fields:
   issue_type: Story
   total: 12
   items:
-    - {name: Summary, key: summary, required: true, type: string}
-    - {name: Story Points, key: customfield_10001, required: true, type: number}
-    - {name: Description, key: description, required: false, type: string}
-    - {name: Labels, key: labels, required: false, type: array}
+    - name: Summary
+      key: summary
+      required: true
+      type: string
+    - name: Story Points
+      key: customfield_10001
+      required: true
+      type: number
+    - name: Description
+      key: description
+      required: false
+      type: string
+    - name: Labels
+      key: labels
+      required: false
+      type: array
 ```
 
 ### Issue Edited
