@@ -29,6 +29,21 @@ import yaml
 from pathlib import Path
 
 
+def prompt_delete(file_path: Path, target_root: Path) -> bool:
+    """
+    Prompt user to confirm deletion of orphan file.
+    Returns True if user confirms deletion, False otherwise.
+    """
+    rel_path = file_path.relative_to(target_root)
+    while True:
+        response = input(f"  Delete orphan '{rel_path}'? [y/n]: ").strip().lower()
+        if response in ('y', 'yes'):
+            return True
+        elif response in ('n', 'no'):
+            return False
+        print("  Please enter 'y' or 'n'")
+
+
 def parse_frontmatter(content: str) -> tuple[dict, str]:
     """
     Parse YAML frontmatter from markdown content.
@@ -211,12 +226,15 @@ def cleanup_orphans(target_root: Path, valid_targets: set[Path]) -> int:
 
         for target_file in dir_path.rglob("*.md"):
             if target_file not in valid_targets:
-                try:
-                    target_file.unlink()
-                    print(f"  Removed orphan: {target_file.relative_to(target_root)}")
-                    removed += 1
-                except Exception as e:
-                    print(f"  Error removing {target_file}: {e}")
+                if prompt_delete(target_file, target_root):
+                    try:
+                        target_file.unlink()
+                        print(f"  Removed: {target_file.relative_to(target_root)}")
+                        removed += 1
+                    except Exception as e:
+                        print(f"  Error removing {target_file}: {e}")
+                else:
+                    print(f"  Skipped: {target_file.relative_to(target_root)}")
 
         # Clean up empty directories
         for dir_to_check in sorted(dir_path.rglob("*"), reverse=True):
@@ -405,12 +423,15 @@ def cleanup_cursor_orphans(target_root: Path, valid_targets: set[Path]) -> int:
     # Find all files in target
     for target_file in target_root.rglob("*"):
         if target_file.is_file() and target_file not in valid_targets:
-            try:
-                target_file.unlink()
-                print(f"  Removed orphan: {target_file.relative_to(target_root)}")
-                removed += 1
-            except Exception as e:
-                print(f"  Error removing {target_file}: {e}")
+            if prompt_delete(target_file, target_root):
+                try:
+                    target_file.unlink()
+                    print(f"  Removed: {target_file.relative_to(target_root)}")
+                    removed += 1
+                except Exception as e:
+                    print(f"  Error removing {target_file}: {e}")
+            else:
+                print(f"  Skipped: {target_file.relative_to(target_root)}")
 
     # Clean up empty directories
     for dir_to_check in sorted(target_root.rglob("*"), reverse=True):

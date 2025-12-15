@@ -258,6 +258,40 @@ def format_issue(issue: dict, include_comments: bool = True) -> dict:
     return result
 
 
+def format_search_markdown(output: dict) -> str:
+    """Format search results as markdown table."""
+    search = output.get("search", {})
+    jql = search.get("jql", "")
+    total = search.get("total", 0)
+    issues = search.get("issues", [])
+
+    lines = [
+        "# Search Results",
+        "",
+        f"**JQL:** `{jql}`  ",
+        f"**Total:** {total} issues",
+        "",
+        "| Key | Type | Status | Summary | Assignee |",
+        "|-----|------|--------|---------|----------|",
+    ]
+
+    for issue in issues:
+        key = issue.get("key", "")
+        issue_type = issue.get("type", "")
+        status = issue.get("status", "")
+        summary = issue.get("summary", "")[:60]
+        if len(issue.get("summary", "")) > 60:
+            summary += "..."
+        assignee = issue.get("assignee")
+        assignee_name = assignee.get("name", "") if assignee else "Unassigned"
+        # Escape pipe characters in summary
+        summary = summary.replace("|", "\\|")
+        lines.append(f"| {key} | {issue_type} | {status} | {summary} | {assignee_name} |")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def format_issue_markdown(issue: dict) -> str:
     """Format issue as markdown document."""
     def get_user_name(user_obj):
@@ -424,7 +458,13 @@ def cmd_search(args):
         if result.get("nextPageToken"):
             output["search"]["has_more"] = True
 
-        yaml_output(output)
+        # Output based on format
+        if args.format == "json":
+            print(json.dumps(output, indent=2))
+        elif args.format == "markdown":
+            print(format_search_markdown(output))
+        else:  # yaml (default)
+            yaml_output(output)
 
     except AuthenticationError as e:
         error_output(str(e))
@@ -1226,6 +1266,10 @@ def main():
     search_parser.add_argument("jql", help="JQL query string")
     search_parser.add_argument(
         "--limit", "-l", type=int, default=25, help="Max results (default: 25)"
+    )
+    search_parser.add_argument(
+        "--format", "-f", choices=["yaml", "json", "markdown"], default="yaml",
+        help="Output format (default: yaml)"
     )
 
     # comments command
