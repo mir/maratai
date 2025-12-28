@@ -20,6 +20,25 @@ brew install acli
 acli jira auth login --web
 ```
 
+If the web auth flow gets interrupted (or you want it to survive terminal disconnects), run it inside a persistent `tmux` session:
+
+```bash
+# Check tmux is installed (optional)
+command -v tmux && tmux -V
+
+# Start a persistent tmux session
+tmux new-session -d -s jira-auth
+
+# Run the Jira web login inside it
+tmux send-keys -t jira-auth:0 "acli jira auth login --web" Enter
+
+# Attach and finish the flow (site select, browser auth)
+tmux attach -t jira-auth
+
+# Verify you’re authenticated
+acli jira auth status
+```
+
 Alternative API token authentication:
 ```bash
 echo "<API_TOKEN>" | acli jira auth login --site "yoursite.atlassian.net" --email "user@example.com" --token
@@ -73,14 +92,9 @@ acli jira workitem comment create --key "PROJ-123" --body "Started investigation
 acli jira workitem comment list --key "PROJ-123"
 ```
 
-## Delete comment
-```bash
-acli jira workitem comment delete --key "PROJ-123" --id 12345
-```
-
 ## Assign issue
 ```bash
-acli jira workitem assign --key "PROJ-123" --assignee "user@example.com"
+acli jira workitem assign --key "PROJ-123" --assignee "@me"
 ```
 
 ## Clone issue
@@ -88,19 +102,9 @@ acli jira workitem assign --key "PROJ-123" --assignee "user@example.com"
 acli jira workitem clone --key "PROJ-123" --to-project "PROJ"
 ```
 
-## Delete issue
-```bash
-acli jira workitem delete --key "PROJ-123"
-```
-
 ## List attachments
 ```bash
 acli jira workitem attachment list --key "PROJ-123"
-```
-
-## Delete attachment
-```bash
-acli jira workitem attachment delete --id 67890
 ```
 
 # Project Commands
@@ -113,16 +117,6 @@ acli jira project list
 ## View project
 ```bash
 acli jira project view --key "PROJ"
-```
-
-## Create project
-```bash
-acli jira project create --from-project "TEAM" --key "MYPROJ" --name "My Project"
-```
-
-## Delete project
-```bash
-acli jira project delete --key "PROJ"
 ```
 
 # Board and Sprint Commands
@@ -166,42 +160,11 @@ acli jira filter add-favourite --filter-id 10001
 acli jira field create --name "Custom Field" --type "com.atlassian.jira.plugin.system.customfieldtypes:textfield"
 ```
 
-## Delete custom field
-```bash
-acli jira field delete --id customfield_10001
-```
-
 # Dashboard Commands
 
 ## Search dashboards
 ```bash
 acli jira dashboard search --name "Team Dashboard"
-```
-
-# Admin Commands
-
-## Check auth status
-```bash
-acli admin auth status
-```
-
-## Switch accounts
-```bash
-acli admin auth switch
-```
-
-## Logout
-```bash
-acli admin auth logout
-```
-
-## User management
-```bash
-# Activate user
-acli admin user activate --id "5f9e8d7c..."
-
-# Deactivate user
-acli admin user deactivate --id "5f9e8d7c..."
 ```
 
 # Output Formatting
@@ -211,9 +174,38 @@ Use `--json` for structured output that can be parsed:
 acli jira workitem view PROJ-123 --json
 ```
 
+# Destructive Commands (Confirm First)
+
+Only run these after explicit confirmation.
+
+## Delete comment
+```bash
+acli jira workitem comment delete --key "PROJ-123" --id 12345
+```
+
+## Delete issue
+```bash
+acli jira workitem delete --key "PROJ-123"
+```
+
+## Delete attachment
+```bash
+acli jira workitem attachment delete --id 67890
+```
+
+## Delete project
+```bash
+acli jira project delete --key "PROJ"
+```
+
+## Delete custom field (moves to trash)
+```bash
+acli jira field delete --id customfield_10001
+```
+
 # Task Guidelines
 
-- Always check auth status before operations: `acli admin auth status`
+- Always check auth status before operations: `acli jira auth status`
 - Use JQL for complex searches
 - For bulk operations, search first then iterate
 - Use `--json` when you need to parse results programmatically
