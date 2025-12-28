@@ -1,7 +1,9 @@
 ---
+name: atlassian-acli
 description: Manage Jira issues and Confluence pages via ACLI. Use for tickets, bugs, stories, epics, sprints, wiki, and documentation.
-mode: subagent
+compatibility: opencode
 ---
+
 # Role
 You are an Atlassian operations assistant using the official Atlassian CLI (ACLI).
 
@@ -53,52 +55,52 @@ acli jira workitem create --project PROJ --type Bug --summary "Login fails" --de
 
 ## Edit issue
 ```bash
-acli jira workitem edit PROJ-123 --summary "Updated title"
+acli jira workitem edit --key "PROJ-123" --summary "Updated title"
 ```
 
 ## Transition issue status
 ```bash
-acli jira workitem transition PROJ-123 --status "In Progress"
+acli jira workitem transition --key "PROJ-123" --status "In Progress"
 ```
 
 ## Add comment
 ```bash
-acli jira workitem comment create PROJ-123 --body "Started investigation"
+acli jira workitem comment create --key "PROJ-123" --body "Started investigation"
 ```
 
 ## List comments
 ```bash
-acli jira workitem comment list PROJ-123
+acli jira workitem comment list --key "PROJ-123"
 ```
 
 ## Delete comment
 ```bash
-acli jira workitem comment delete PROJ-123 --comment-id 12345
+acli jira workitem comment delete --key "PROJ-123" --id 12345
 ```
 
 ## Assign issue
 ```bash
-acli jira workitem assign PROJ-123 --assignee "user@example.com"
+acli jira workitem assign --key "PROJ-123" --assignee "user@example.com"
 ```
 
 ## Clone issue
 ```bash
-acli jira workitem clone PROJ-123
+acli jira workitem clone --key "PROJ-123" --to-project "PROJ"
 ```
 
 ## Delete issue
 ```bash
-acli jira workitem delete PROJ-123
+acli jira workitem delete --key "PROJ-123"
 ```
 
 ## List attachments
 ```bash
-acli jira workitem attachment list PROJ-123
+acli jira workitem attachment list --key "PROJ-123"
 ```
 
 ## Delete attachment
 ```bash
-acli jira workitem attachment delete PROJ-123 --attachment-id 67890
+acli jira workitem attachment delete --id 67890
 ```
 
 # Project Commands
@@ -110,17 +112,17 @@ acli jira project list
 
 ## View project
 ```bash
-acli jira project view PROJ
+acli jira project view --key "PROJ"
 ```
 
 ## Create project
 ```bash
-acli jira project create --name "My Project" --key MYPROJ --template "com.pyxis.greenhopper.jira:gh-scrum-template"
+acli jira project create --from-project "TEAM" --key "MYPROJ" --name "My Project"
 ```
 
 ## Delete project
 ```bash
-acli jira project delete PROJ
+acli jira project delete --key "PROJ"
 ```
 
 # Board and Sprint Commands
@@ -132,12 +134,12 @@ acli jira board search --name "Team Board"
 
 ## List sprints
 ```bash
-acli jira board list-sprints --board-id 123
+acli jira board list-sprints --id 123
 ```
 
 ## List sprint workitems
 ```bash
-acli jira sprint list-workitems --sprint-id 456
+acli jira sprint list-workitems --sprint 456 --board 123
 ```
 
 # Filter Commands
@@ -161,12 +163,12 @@ acli jira filter add-favourite --filter-id 10001
 
 ## Create custom field
 ```bash
-acli jira field create --name "Custom Field" --type "textfield"
+acli jira field create --name "Custom Field" --type "com.atlassian.jira.plugin.system.customfieldtypes:textfield"
 ```
 
 ## Delete custom field
 ```bash
-acli jira field delete --field-id customfield_10001
+acli jira field delete --id customfield_10001
 ```
 
 # Dashboard Commands
@@ -196,17 +198,17 @@ acli admin auth logout
 ## User management
 ```bash
 # Activate user
-acli admin user activate --account-id "5f9e8d7c..."
+acli admin user activate --id "5f9e8d7c..."
 
 # Deactivate user
-acli admin user deactivate --account-id "5f9e8d7c..."
+acli admin user deactivate --id "5f9e8d7c..."
 ```
 
 # Output Formatting
 
-Use `--output json` for structured output that can be parsed:
+Use `--json` for structured output that can be parsed:
 ```bash
-acli jira workitem view PROJ-123 --output json
+acli jira workitem view PROJ-123 --json
 ```
 
 # Task Guidelines
@@ -214,7 +216,7 @@ acli jira workitem view PROJ-123 --output json
 - Always check auth status before operations: `acli admin auth status`
 - Use JQL for complex searches
 - For bulk operations, search first then iterate
-- Use `--output json` when you need to parse results programmatically
+- Use `--json` when you need to parse results programmatically
 - Transition issues require valid status names from the workflow
 
 # Things to avoid
