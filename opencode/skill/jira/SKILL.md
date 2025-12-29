@@ -4,8 +4,18 @@ description: Manage Jira issues and Confluence pages via ACLI. Use for tickets, 
 compatibility: opencode
 ---
 
-# Role
-You are an Atlassian operations assistant using the official Atlassian CLI (ACLI).
+## What I do
+
+- View and search Jira issues using JQL queries
+- Create, edit, and transition issues (bugs, stories, tasks, epics)
+- Manage comments and attachments on issues
+- Work with boards, sprints, and dashboards
+- Execute ACLI commands for Atlassian products
+
+## When to use me
+
+Use this when working with Jira tickets, issues, sprints, or boards.
+Ask clarifying questions if the project key or issue type is unclear.
 
 # Prerequisites
 
@@ -17,6 +27,7 @@ brew tap atlassian/homebrew-acli
 brew install acli
 
 # Authenticate (opens browser for OAuth)
+# After the login through browser is done, acli requires 'enter' key to be pressed
 acli jira auth login --web
 ```
 
@@ -46,14 +57,19 @@ echo "<API_TOKEN>" | acli jira auth login --site "yoursite.atlassian.net" --emai
 
 # Jira Commands
 
-## View issue
+## View
 ```bash
+# list projects
+acli jira project list
+acli jira project view --key "PROJ"
+# view issues
 acli jira workitem view PROJ-123
-```
-
-## Search with JQL
-```bash
+# search with jql
 acli jira workitem search --jql "project=PROJ AND status='In Progress'"
+# show comments
+acli jira workitem comment list --key "PROJ-123"
+# list attachments
+acli jira workitem attachment list --key "PROJ-123"
 ```
 
 Common JQL examples:
@@ -62,108 +78,37 @@ Common JQL examples:
 - `reporter=currentUser() AND created >= -7d` - My recent issues
 - `labels=urgent AND status!=Done` - Urgent incomplete items
 
-## Create issue
+## Managing issues
 ```bash
-acli jira workitem create --project PROJ --type Story --summary "New feature request"
-```
-
-With description:
-```bash
+# create
 acli jira workitem create --project PROJ --type Bug --summary "Login fails" --description "Users cannot login with SSO"
-```
-
-## Edit issue
-```bash
+# edit
 acli jira workitem edit --key "PROJ-123" --summary "Updated title"
-```
-
-## Transition issue status
-```bash
+# change status
 acli jira workitem transition --key "PROJ-123" --status "In Progress"
-```
-
-## Add comment
-```bash
+# comment
 acli jira workitem comment create --key "PROJ-123" --body "Started investigation"
-```
-
-## List comments
-```bash
-acli jira workitem comment list --key "PROJ-123"
-```
-
-## Assign issue
-```bash
+# assign
 acli jira workitem assign --key "PROJ-123" --assignee "@me"
-```
-
-## Clone issue
-```bash
+# clone
 acli jira workitem clone --key "PROJ-123" --to-project "PROJ"
-```
-
-## List attachments
-```bash
-acli jira workitem attachment list --key "PROJ-123"
-```
-
-# Project Commands
-
-## List projects
-```bash
-acli jira project list
-```
-
-## View project
-```bash
-acli jira project view --key "PROJ"
 ```
 
 # Board and Sprint Commands
 
-## Search boards
 ```bash
+# Search boards
 acli jira board search --name "Team Board"
-```
-
 ## List sprints
-```bash
 acli jira board list-sprints --id 123
-```
-
 ## List sprint workitems
-```bash
 acli jira sprint list-workitems --sprint 456 --board 123
-```
-
-# Filter Commands
-
-## List filters
-```bash
-acli jira filter list
-```
-
-## Search filters
-```bash
-acli jira filter search --name "My filter"
-```
-
-## Add filter to favourites
-```bash
-acli jira filter add-favourite --filter-id 10001
-```
-
-# Field Commands
-
-## Create custom field
-```bash
-acli jira field create --name "Custom Field" --type "com.atlassian.jira.plugin.system.customfieldtypes:textfield"
 ```
 
 # Dashboard Commands
 
-## Search dashboards
 ```bash
+## Search dashboards
 acli jira dashboard search --name "Team Dashboard"
 ```
 
@@ -175,39 +120,23 @@ acli jira workitem view PROJ-123 --json
 ```
 
 # Destructive Commands (Confirm First)
-
 Only run these after explicit confirmation.
-
-## Delete comment
 ```bash
+## Delete comment
 acli jira workitem comment delete --key "PROJ-123" --id 12345
-```
 
 ## Delete issue
-```bash
 acli jira workitem delete --key "PROJ-123"
-```
 
 ## Delete attachment
-```bash
 acli jira workitem attachment delete --id 67890
 ```
 
-## Delete project
-```bash
-acli jira project delete --key "PROJ"
-```
-
-## Delete custom field (moves to trash)
-```bash
-acli jira field delete --id customfield_10001
-```
-
 # Task Guidelines
-
-- Always check auth status before operations: `acli jira auth status`
+- If command fails check the auth status: `acli jira auth status`
+- Use --help for `acli` to discrover additional managing tools, if the described ones are not enough.
 - Use JQL for complex searches
-- For bulk operations, search first then iterate
+- For bulk operations write python scripts
 - Use `--json` when you need to parse results programmatically
 - Transition issues require valid status names from the workflow
 
