@@ -1,6 +1,6 @@
 ---
-name: atlassian-acli
-description: Manage Jira issues and Confluence pages via ACLI. Use for tickets, bugs, stories, epics, sprints, wiki, and documentation.
+name: jira
+description: Manage Jira issues via atlassian cli tool (acli). Use for tickets, bugs, stories, epics, sprints, and others.
 compatibility: opencode
 ---
 
