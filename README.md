@@ -8,11 +8,12 @@ once and re-used across tools.
 
 Repository Layout
 -----------------
-- `claude-maratai-dev/` – Claude Code plugin for development workflows with agents
-  and commands for project search, code review, specification creation, and
-  web research. Includes deepwiki MCP server.
-- `claude-maratai-manager/` – Claude Code plugin for management workflows with
-  Atlassian integration (Jira & Confluence) and weekly reporting tools.
+- `claude-maratai-dev/` (v1.0.1) – Claude Code plugin for development workflows with
+  agents and commands for project search, code review, specification creation, and
+  web research. Includes deepwiki MCP server for GitHub repository documentation.
+- `claude-maratai-manager/` (v1.4.0) – Claude Code plugin for management workflows
+  with Atlassian integration (Jira & Confluence), Google Docs/Sheets export, and
+  weekly reporting tools.
 - `opencode/` – OpenCode-compatible copies of the same prompts (folder names are
   singular: `agent/` and `command/`); also contains `opencode.json` with local
   MCP and formatter settings.
@@ -89,12 +90,21 @@ Agent Reference (maratai-dev)
   plan against a specification, logs critical gaps, and calculates coverage
   metrics in a standalone markdown report.
 
+MCP Server Reference (maratai-dev)
+----------------------------------
+- **`deepwiki`** – Remote MCP server for querying GitHub repository documentation
+  via DeepWiki. Provides tools for reading wiki structure, viewing content, and
+  asking questions about repositories. Connects to `https://mcp.deepwiki.com/sse`.
+
 Skill Reference (maratai-manager)
 ---------------------------------
 - **`skills/atlassian/`** – Jira and Confluence integration via OAuth 2.0.
   Access issues, projects, sprints, and wiki pages through Python scripts with
-  compact YAML output to save tokens. See `skills/atlassian/references/SETUP.md`
-  for OAuth configuration.
+  compact YAML output to save tokens. Run `scripts/auth.py login` for setup.
+- **`skills/google-docs-sheets/`** – Export Google Docs and Google Sheets to
+  Markdown. Uses Google APIs with read-only scopes. Prefers gcloud ADC
+  authentication with browser OAuth fallback. Useful for ingesting Google
+  Workspace content for summarization or analysis.
 
 Claude Code Plugins
 -------------------
@@ -128,7 +138,8 @@ Cursor users can import rules from this repository:
 4. Enter the repository URL: `https://github.com/mir/maratai`
 
 Available rules:
-- **`atlassian`** – Jira and Confluence access via Python scripts
+- **`atlassian`** – Jira and Confluence access via Python scripts with OAuth 2.0
+- **`google-docs-sheets`** – Export Google Docs and Sheets to Markdown via gcloud ADC
 
 Rules auto-sync when the source repository is updated.
 
