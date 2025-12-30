@@ -34,18 +34,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import yaml
 
-from common import get_stored_value, yaml_output, error_output
-from mcp_client import AtlassianMCPClient, MCPError, AuthenticationError
-
-
-def get_cloud_id() -> str:
-    """Get the stored cloud ID."""
-    cloud_id = get_stored_value("cloud_id")
-    if not cloud_id:
-        raise Exception(
-            "No cloud ID stored. Run: uv run scripts/auth.py login"
-        )
-    return cloud_id
+from common import (
+    get_cloud_id,
+    yaml_output,
+    error_output,
+    parse_mcp_result,
+    mcp_client_context,
+    command_handler,
+)
 
 
 def html_to_text(html_content: str) -> str:
@@ -194,13 +190,12 @@ def format_page_markdown(page: dict) -> str:
     return "\n".join(lines)
 
 
+@command_handler
 def cmd_get(args):
     """Fetch a page with content via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "getConfluencePage",
             {
@@ -210,30 +205,19 @@ def cmd_get(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         yaml_output({"page": format_page(result)})
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_search(args):
     """Search pages using CQL via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "searchConfluenceUsingCql",
             {
@@ -243,9 +227,9 @@ def cmd_search(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         results = result.get("results", [])
 
@@ -279,24 +263,13 @@ def cmd_search(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_children(args):
     """Get child pages via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "getConfluencePageDescendants",
             {
@@ -306,9 +279,9 @@ def cmd_children(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         children = result.get("results", result) if isinstance(result, dict) else result
 
@@ -330,24 +303,13 @@ def cmd_children(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_spaces(args):
     """List Confluence spaces via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "getConfluenceSpaces",
             {
@@ -356,9 +318,9 @@ def cmd_spaces(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         spaces = result.get("results", [])
 
@@ -379,25 +341,13 @@ def cmd_spaces(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_ancestors(args):
     """Get ancestor (parent) pages via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
-        # Get page with ancestors
+    with mcp_client_context() as client:
         result = client.call_tool(
             "getConfluencePage",
             {
@@ -407,9 +357,9 @@ def cmd_ancestors(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         ancestors = result.get("ancestors", [])
 
@@ -425,26 +375,15 @@ def cmd_ancestors(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_export(args):
     """Export pages matching CQL query to files or stdout."""
     import os
 
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         # Search for pages using CQL
         result = client.call_tool(
             "searchConfluenceUsingCql",
@@ -455,13 +394,13 @@ def cmd_export(args):
             },
         )
 
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         search_results = result.get("results", [])
         if not search_results:
             error_output("No pages found matching the query")
-            return
 
         # Fetch full details for each page
         exported_pages = []
@@ -479,8 +418,10 @@ def cmd_export(args):
                         "includeBody": True,
                     },
                 )
-                if isinstance(full_page, str):
-                    full_page = json.loads(full_page)
+                full_page, err = parse_mcp_result(full_page)
+                if err:
+                    print(f"Warning: Failed to fetch page {page_id}: {err}", file=sys.stderr)
+                    continue
                 formatted = format_page(full_page, include_content=True)
                 exported_pages.append(formatted)
             except Exception as e:
@@ -488,7 +429,6 @@ def cmd_export(args):
 
         if not exported_pages:
             error_output("Failed to fetch any pages")
-            return
 
         # Output based on format
         if args.output_dir:
@@ -505,14 +445,14 @@ def cmd_export(args):
                 filepath = os.path.join(args.output_dir, filename)
 
                 if args.format == "markdown":
-                    content = format_page_markdown(page)
+                    file_content = format_page_markdown(page)
                 elif args.format == "json":
-                    content = json.dumps(page, indent=2)
+                    file_content = json.dumps(page, indent=2)
                 else:  # yaml
-                    content = yaml.dump({"page": page}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    file_content = yaml.dump({"page": page}, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
                 with open(filepath, "w") as f:
-                    f.write(content)
+                    f.write(file_content)
 
             output = {
                 "export": {
@@ -533,16 +473,6 @@ def cmd_export(args):
                 print(json.dumps({"pages": exported_pages}, indent=2))
             else:  # yaml
                 print(yaml.dump({"pages": exported_pages}, default_flow_style=False, allow_unicode=True, sort_keys=False))
-
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
 
 def main():

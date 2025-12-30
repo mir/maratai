@@ -39,8 +39,14 @@ from pathlib import Path
 # Add parent directory to path for common module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from common import get_stored_value, yaml_output, error_output
-from mcp_client import AtlassianMCPClient, MCPError, AuthenticationError
+from common import (
+    get_cloud_id,
+    yaml_output,
+    error_output,
+    parse_mcp_result,
+    mcp_client_context,
+    command_handler,
+)
 
 
 def parse_jira_error(error: Exception) -> dict:
@@ -137,40 +143,6 @@ def jira_error_output(error: Exception) -> None:
         error_output(parsed.get("message", str(error)))
 
 
-def parse_mcp_result(result) -> tuple[dict | list | None, str | None]:
-    """
-    Parse MCP tool result, handling JSON strings and error responses.
-
-    Returns:
-        (parsed_result, error_message) - error_message is None if no error
-    """
-    # Parse JSON string if needed
-    if isinstance(result, str):
-        try:
-            result = json.loads(result)
-        except json.JSONDecodeError:
-            # Check if it looks like an error message
-            if "Failed to" in result or "Error" in result:
-                return None, result
-            return None, f"Invalid response: {result[:100]}"
-
-    # Check for MCP error response format: {"error": true, "message": "..."}
-    if isinstance(result, dict) and result.get("error"):
-        return None, result.get("message", "Operation failed")
-
-    return result, None
-
-
-def get_cloud_id() -> str:
-    """Get the stored cloud ID."""
-    cloud_id = get_stored_value("cloud_id")
-    if not cloud_id:
-        raise Exception(
-            "No cloud ID stored. Run: uv run scripts/auth.py login"
-        )
-    return cloud_id
-
-
 def format_user(user_data: dict | None) -> dict | None:
     """Format user data for YAML output."""
     if not user_data:
@@ -258,6 +230,40 @@ def format_issue(issue: dict, include_comments: bool = True) -> dict:
     return result
 
 
+def format_search_markdown(output: dict) -> str:
+    """Format search results as markdown table."""
+    search = output.get("search", {})
+    jql = search.get("jql", "")
+    total = search.get("total", 0)
+    issues = search.get("issues", [])
+
+    lines = [
+        "# Search Results",
+        "",
+        f"**JQL:** `{jql}`  ",
+        f"**Total:** {total} issues",
+        "",
+        "| Key | Type | Status | Summary | Assignee |",
+        "|-----|------|--------|---------|----------|",
+    ]
+
+    for issue in issues:
+        key = issue.get("key", "")
+        issue_type = issue.get("type", "")
+        status = issue.get("status", "")
+        summary = issue.get("summary", "")[:60]
+        if len(issue.get("summary", "")) > 60:
+            summary += "..."
+        assignee = issue.get("assignee")
+        assignee_name = assignee.get("name", "") if assignee else "Unassigned"
+        # Escape pipe characters in summary
+        summary = summary.replace("|", "\\|")
+        lines.append(f"| {key} | {issue_type} | {status} | {summary} | {assignee_name} |")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def format_issue_markdown(issue: dict) -> str:
     """Format issue as markdown document."""
     def get_user_name(user_obj):
@@ -332,13 +338,12 @@ def extract_text_from_adf(adf: dict) -> str:
     return "".join(texts)
 
 
+@command_handler
 def cmd_get(args):
     """Fetch a single issue with all details via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "getJiraIssue",
             {
@@ -347,30 +352,19 @@ def cmd_get(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         yaml_output({"issue": format_issue(result)})
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_search(args):
     """Search issues using JQL via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "searchJiraIssuesUsingJql",
             {
@@ -380,11 +374,15 @@ def cmd_search(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
-        issues = result.get("issues", [])
+        # Handle both dict with "issues" key and direct list of issues
+        if isinstance(result, list):
+            issues = result
+        else:
+            issues = result.get("issues", [])
 
         output = {
             "search": {
@@ -420,31 +418,25 @@ def cmd_search(args):
 
             output["search"]["issues"].append(issue_info)
 
-        # Add pagination info
-        if result.get("nextPageToken"):
+        # Add pagination info (only if result is a dict with pagination info)
+        if isinstance(result, dict) and result.get("nextPageToken"):
             output["search"]["has_more"] = True
 
-        yaml_output(output)
-
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
+        # Output based on format
+        if args.format == "json":
+            print(json.dumps(output, indent=2))
+        elif args.format == "markdown":
+            print(format_search_markdown(output))
+        else:  # yaml (default)
+            yaml_output(output)
 
 
+@command_handler
 def cmd_comments(args):
     """Get comments for an issue via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
-        # First get the issue to retrieve comments
+    with mcp_client_context() as client:
         result = client.call_tool(
             "getJiraIssue",
             {
@@ -453,9 +445,9 @@ def cmd_comments(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         fields = result.get("fields", {})
         comment_data = fields.get("comment", {})
@@ -480,24 +472,13 @@ def cmd_comments(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_projects(args):
     """List accessible Jira projects via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "getVisibleJiraProjects",
             {
@@ -506,9 +487,9 @@ def cmd_projects(args):
             },
         )
 
-        # Parse JSON result if string
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         projects = result.get("values", result) if isinstance(result, dict) else result
 
@@ -530,31 +511,21 @@ def cmd_projects(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_transitions(args):
     """Get available transitions for an issue via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         # Get current issue status first
         issue_result = client.call_tool(
             "getJiraIssue",
             {"cloudId": cloud_id, "issueIdOrKey": args.key},
         )
-        if isinstance(issue_result, str):
-            issue_result = json.loads(issue_result)
+        issue_result, error_msg = parse_mcp_result(issue_result)
+        if error_msg:
+            error_output(error_msg)
         current_status = issue_result.get("fields", {}).get("status", {}).get("name")
 
         # Get available transitions
@@ -562,8 +533,9 @@ def cmd_transitions(args):
             "getTransitionsForJiraIssue",
             {"cloudId": cloud_id, "issueIdOrKey": args.key},
         )
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         transitions = result.get("transitions", [])
 
@@ -585,24 +557,13 @@ def cmd_transitions(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_comment(args):
     """Add a comment to an issue via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "addCommentToJiraIssue",
             {
@@ -614,7 +575,6 @@ def cmd_comment(args):
         result, error_msg = parse_mcp_result(result)
         if error_msg:
             jira_error_output(Exception(error_msg))
-            return
 
         output = {
             "comment": {
@@ -627,24 +587,13 @@ def cmd_comment(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_transition(args):
     """Transition an issue to a new status via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         # Get available transitions
         result = client.call_tool(
             "getTransitionsForJiraIssue",
@@ -653,7 +602,6 @@ def cmd_transition(args):
         result, error_msg = parse_mcp_result(result)
         if error_msg:
             jira_error_output(Exception(error_msg))
-            return
 
         transitions = result.get("transitions", [])
 
@@ -681,7 +629,6 @@ def cmd_transition(args):
         if not target_transition:
             available = [f"{t.get('name')} (id: {t.get('id')})" for t in transitions]
             error_output(f"Transition not found. Available: {', '.join(available)}")
-            return
 
         # Perform transition
         result = client.call_tool(
@@ -695,7 +642,6 @@ def cmd_transition(args):
         _, error_msg = parse_mcp_result(result)
         if error_msg:
             jira_error_output(Exception(error_msg))
-            return
 
         output = {
             "transition": {
@@ -707,24 +653,13 @@ def cmd_transition(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_assign(args):
     """Assign or unassign an issue via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         if args.unassign:
             # Unassign the issue
             assignee_id = None
@@ -734,7 +669,6 @@ def cmd_assign(args):
             user_info, error_msg = parse_mcp_result(user_info)
             if error_msg:
                 jira_error_output(Exception(error_msg))
-                return
             assignee_id = user_info.get("account_id")
         else:
             assignee_id = args.account_id
@@ -751,7 +685,6 @@ def cmd_assign(args):
         _, error_msg = parse_mcp_result(result)
         if error_msg:
             jira_error_output(Exception(error_msg))
-            return
 
         if assignee_id:
             output = {
@@ -771,24 +704,13 @@ def cmd_assign(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_create(args):
     """Create a new Jira issue via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         # Build MCP tool arguments
         tool_args = {
             "cloudId": cloud_id,
@@ -825,7 +747,6 @@ def cmd_create(args):
         result, error_msg = parse_mcp_result(result)
         if error_msg:
             jira_error_output(Exception(error_msg))
-            return
 
         output = {
             "created": {
@@ -838,45 +759,32 @@ def cmd_create(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        jira_error_output(e)
-    except Exception as e:
-        jira_error_output(e)
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_edit(args):
     """Edit an existing Jira issue via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
-        # Build fields to update
-        fields = {}
+    # Build fields to update
+    fields = {}
 
-        if args.summary:
-            fields["summary"] = args.summary
+    if args.summary:
+        fields["summary"] = args.summary
 
-        if args.description:
-            fields["description"] = args.description
+    if args.description:
+        fields["description"] = args.description
 
-        # Custom fields via --field option
-        if args.field:
-            for field_spec in args.field:
-                if "=" in field_spec:
-                    name, value = field_spec.split("=", 1)
-                    fields[name.strip()] = value.strip()
+    # Custom fields via --field option
+    if args.field:
+        for field_spec in args.field:
+            if "=" in field_spec:
+                name, value = field_spec.split("=", 1)
+                fields[name.strip()] = value.strip()
 
-        if not fields:
-            error_output("No fields to update. Use --summary, --description, or --field")
-            return
+    if not fields:
+        error_output("No fields to update. Use --summary, --description, or --field")
 
-        # Edit issue
+    with mcp_client_context() as client:
         result = client.call_tool(
             "editJiraIssue",
             {
@@ -888,7 +796,6 @@ def cmd_edit(args):
         result, error_msg = parse_mcp_result(result)
         if error_msg:
             jira_error_output(Exception(error_msg))
-            return
 
         output = {
             "edited": {
@@ -899,30 +806,20 @@ def cmd_edit(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        jira_error_output(e)
-    except Exception as e:
-        jira_error_output(e)
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_types(args):
     """List available issue types for a project via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "getJiraProjectIssueTypesMetadata",
             {"cloudId": cloud_id, "projectIdOrKey": args.project},
         )
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         issue_types = result.get("issueTypes", [])
 
@@ -944,31 +841,21 @@ def cmd_types(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_fields(args):
     """List fields for a project and issue type via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         # First get the issue type ID from name
         types_result = client.call_tool(
             "getJiraProjectIssueTypesMetadata",
             {"cloudId": cloud_id, "projectIdOrKey": args.project},
         )
-        if isinstance(types_result, str):
-            types_result = json.loads(types_result)
+        types_result, error_msg = parse_mcp_result(types_result)
+        if error_msg:
+            error_output(error_msg)
 
         issue_type_id = None
         for t in types_result.get("issueTypes", []):
@@ -979,7 +866,6 @@ def cmd_fields(args):
         if not issue_type_id:
             available = [t.get("name") for t in types_result.get("issueTypes", [])]
             error_output(f"Issue type '{args.type}' not found. Available: {', '.join(available)}")
-            return
 
         # Get field metadata
         result = client.call_tool(
@@ -990,8 +876,9 @@ def cmd_fields(args):
                 "issueTypeId": issue_type_id,
             },
         )
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         fields = result.get("fields", [])
 
@@ -1017,26 +904,15 @@ def cmd_fields(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        jira_error_output(e)
-    except Exception as e:
-        jira_error_output(e)
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_me(args):
     """Show current user info via MCP."""
-    client = None
-    try:
-        client = AtlassianMCPClient()
-
+    with mcp_client_context() as client:
         result = client.call_tool("atlassianUserInfo", {})
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         output = {
             "user": {
@@ -1048,30 +924,20 @@ def cmd_me(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_lookup(args):
     """Lookup user by name or email via MCP."""
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         result = client.call_tool(
             "lookupJiraAccountId",
             {"cloudId": cloud_id, "searchString": args.query},
         )
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
         # Extract users from nested structure: result.users.users
         users_data = result.get("users", {})
@@ -1093,26 +959,16 @@ def cmd_lookup(args):
 
         yaml_output(output)
 
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
 
-
+@command_handler
 def cmd_export(args):
     """Export issues matching JQL query to files or stdout."""
     import os
+    import yaml as yaml_lib
 
-    client = None
-    try:
-        cloud_id = get_cloud_id()
-        client = AtlassianMCPClient()
+    cloud_id = get_cloud_id()
 
+    with mcp_client_context() as client:
         # Search for issues using JQL
         result = client.call_tool(
             "searchJiraIssuesUsingJql",
@@ -1123,13 +979,17 @@ def cmd_export(args):
             },
         )
 
-        if isinstance(result, str):
-            result = json.loads(result)
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
 
-        issues = result.get("issues", [])
+        # Handle both dict with "issues" key and direct list of issues
+        if isinstance(result, list):
+            issues = result
+        else:
+            issues = result.get("issues", [])
         if not issues:
             error_output("No issues found matching the query")
-            return
 
         # Fetch full details for each issue
         exported_issues = []
@@ -1143,8 +1003,10 @@ def cmd_export(args):
                         "issueIdOrKey": issue_key,
                     },
                 )
-                if isinstance(full_issue, str):
-                    full_issue = json.loads(full_issue)
+                full_issue, err = parse_mcp_result(full_issue)
+                if err:
+                    print(f"Warning: Failed to fetch {issue_key}: {err}", file=sys.stderr)
+                    continue
                 formatted = format_issue(full_issue, include_comments=True)
                 exported_issues.append(formatted)
             except Exception as e:
@@ -1153,7 +1015,6 @@ def cmd_export(args):
 
         if not exported_issues:
             error_output("Failed to fetch any issues")
-            return
 
         # Output based on format
         if args.output_dir:
@@ -1172,8 +1033,7 @@ def cmd_export(args):
                 elif args.format == "json":
                     content = json.dumps(issue, indent=2)
                 else:  # yaml
-                    import yaml
-                    content = yaml.dump({"issue": issue}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    content = yaml_lib.dump({"issue": issue}, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
                 with open(filepath, "w") as f:
                     f.write(content)
@@ -1196,18 +1056,7 @@ def cmd_export(args):
             elif args.format == "json":
                 print(json.dumps({"issues": exported_issues}, indent=2))
             else:  # yaml
-                import yaml
-                print(yaml.dump({"issues": exported_issues}, default_flow_style=False, allow_unicode=True, sort_keys=False))
-
-    except AuthenticationError as e:
-        error_output(str(e))
-    except MCPError as e:
-        error_output(f"MCP error: {e}")
-    except Exception as e:
-        error_output(str(e))
-    finally:
-        if client:
-            client.close()
+                print(yaml_lib.dump({"issues": exported_issues}, default_flow_style=False, allow_unicode=True, sort_keys=False))
 
 
 def main():
@@ -1226,6 +1075,10 @@ def main():
     search_parser.add_argument("jql", help="JQL query string")
     search_parser.add_argument(
         "--limit", "-l", type=int, default=25, help="Max results (default: 25)"
+    )
+    search_parser.add_argument(
+        "--format", "-f", choices=["yaml", "json", "markdown"], default="yaml",
+        help="Output format (default: yaml)"
     )
 
     # comments command

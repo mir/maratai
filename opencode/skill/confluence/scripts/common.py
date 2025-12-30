@@ -13,9 +13,12 @@ Supports both OAuth (pure Python) and Basic Auth (API token).
 """
 
 import base64
+import functools
+import json
 import sys
 import time
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Callable
 
 import httpx
 import keyring
@@ -282,3 +285,112 @@ def error_output(message: str) -> None:
     """Output error message as YAML to stderr."""
     yaml.dump({"error": message}, sys.stderr, default_flow_style=False)
     sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# MCP Utilities - shared functions for MCP client operations
+# ---------------------------------------------------------------------------
+
+def parse_mcp_result(result: Any) -> tuple[dict | list | None, str | None]:
+    """
+    Parse MCP tool result, handling JSON strings, lists and error responses.
+
+    Returns:
+        (parsed_result, error_message) - error_message is None if no error
+    """
+    # Handle list of content blocks (MCP returns list when multiple content items)
+    if isinstance(result, list) and result:
+        for item in result:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text", "{}")
+                try:
+                    result = json.loads(text)
+                    break
+                except json.JSONDecodeError:
+                    if "Failed to" in text or "Error" in text:
+                        return None, text
+                    return None, f"Invalid response: {text[:100]}"
+        else:
+            # No text block found
+            return None, "No text content in MCP response"
+
+    # Parse JSON string if needed
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            # Check if it looks like an error message
+            if "Failed to" in result or "Error" in result:
+                return None, result
+            return None, f"Invalid response: {result[:100]}"
+
+    # Check for MCP error response format: {"error": true, "message": "..."}
+    if isinstance(result, dict) and result.get("error"):
+        return None, result.get("message", "Operation failed")
+
+    return result, None
+
+
+@contextmanager
+def mcp_client_context():
+    """
+    Context manager for MCP client lifecycle.
+
+    Usage:
+        with mcp_client_context() as client:
+            result = client.call_tool(...)
+    """
+    # Import here to avoid circular imports
+    from mcp_client import AtlassianMCPClient
+
+    client = AtlassianMCPClient()
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+def command_handler(func: Callable) -> Callable:
+    """
+    Decorator for consistent error handling in CLI commands.
+
+    Handles AuthenticationError, MCPError, and generic exceptions,
+    outputting errors in YAML format and exiting with code 1.
+    """
+    # Import here to avoid circular imports
+    from mcp_client import MCPError, AuthenticationError as MCPAuthError
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except (AuthenticationError, MCPAuthError) as e:
+            yaml.dump(
+                {"error": {"message": str(e), "hint": "Run: uv run scripts/auth.py login"}},
+                sys.stderr,
+                default_flow_style=False,
+            )
+            sys.exit(1)
+        except MCPError as e:
+            yaml.dump(
+                {"error": {"message": f"MCP error: {e}"}},
+                sys.stderr,
+                default_flow_style=False,
+            )
+            sys.exit(1)
+        except ConfigurationError as e:
+            yaml.dump(
+                {"error": {"message": str(e), "hint": "Run: uv run scripts/auth.py login"}},
+                sys.stderr,
+                default_flow_style=False,
+            )
+            sys.exit(1)
+        except Exception as e:
+            yaml.dump(
+                {"error": {"message": str(e)}},
+                sys.stderr,
+                default_flow_style=False,
+            )
+            sys.exit(1)
+
+    return wrapper
