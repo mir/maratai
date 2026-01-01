@@ -1,6 +1,6 @@
 ---
 name: jira
-description: Manage Jira issues via atlassian cli tool (acli). Use for tickets, bugs, stories, epics, sprints, and others.
+description: Manage Jira issues via atlassian cli tool (acli). Use for tickets, bugs, stories, epics, sprints. Contains workflows for ticket cleanup and status updates.
 compatibility: opencode
 ---
 
@@ -16,6 +16,14 @@ compatibility: opencode
 
 Use this when working with Jira tickets, issues, sprints, or boards.
 Ask clarifying questions if the project key or issue type is unclear.
+
+# Workflows
+
+## Ticket Cleanup (`workflows/jira_cleanup.md`)
+**Use when:** cleanup tickets, analyze tickets, stale tickets, stuck tickets, audit tickets, ticket hygiene, review backlog, find duplicates, outdated tickets
+
+## Status Update (`workflows/jira_status_update.md`)
+**Use when:** update ticket status, sync commits to tickets, what did I work on, progress update, weekly update, match commits to jira
 
 # Prerequisites
 

@@ -1,5 +1,5 @@
 ---
-description: Update statuses on jira tickets in progress and planned
+description: "Update statuses on jira tickets in progress and planned"
 ---
 
 1. Fetch JIRA tickets with status 'In Progress' or 'Planned'
@@ -11,8 +11,3 @@ description: Update statuses on jira tickets in progress and planned
    - What remains unimplemented and still affects users
    - Whether to split the ticket (include draft descriptions)
    - Whether to change the ticket status
-
-Important:
-- Do not post comments
-- Do not change ticket status
-- Do not edit tickets
