@@ -9,10 +9,10 @@ Access Jira and Confluence content via Python scripts. All output is YAML format
 
 # Workflows
 
-## Ticket Cleanup (`jira/jira_cleanup.md`)
+## Ticket Cleanup (`references/jira_cleanup.md`)
 **Use when:** cleanup tickets, analyze tickets, stale tickets, stuck tickets, audit tickets, ticket hygiene, review backlog, find duplicates, outdated tickets
 
-## Status Update (`jira/jira_status_update.md`)
+## Status Update (`references/jira_status_update.md`)
 **Use when:** update ticket status, sync commits to tickets, what did I work on, progress update, weekly update, match commits to jira
 
 ### OAuth Login
