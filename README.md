@@ -75,10 +75,6 @@ Command Reference (maratai-manager)
 - **`commands/week_report.md`** – weekly status writer. Summarizes recent work
   per project and prepares (but does not send) a Slack payload with the
   formatted report.
-- **`commands/update_jira_tickets.md`** – Jira ticket updater. Fetches tickets
-  with "In Progress" or "Planned" status, matches them against git commits from
-  the last 7 days, and drafts status update comments describing what was
-  implemented, what remains, and whether to split or change ticket status.
 
 Agent Reference (maratai-dev)
 -----------------------------
@@ -105,6 +101,11 @@ Skill Reference (maratai-manager)
 - **`skills/atlassian/`** – Jira and Confluence integration via OAuth 2.0.
   Access issues, projects, sprints, and wiki pages through Python scripts with
   compact YAML output to save tokens. Run `scripts/auth.py login` for setup.
+  Includes workflow references:
+  - **`references/jira_cleanup.md`** – ticket hygiene workflow for analyzing
+    stale tickets, finding duplicates, and cleaning up backlogs.
+  - **`references/jira_status_update.md`** – matches git commits from the last
+    7 days against Jira tickets to draft status update comments.
 - **`skills/google-docs-sheets/`** – Export Google Docs and Google Sheets to
   Markdown. Uses Google APIs with read-only scopes. Prefers gcloud ADC
   authentication with browser OAuth fallback. Useful for ingesting Google
