@@ -11,7 +11,7 @@ Repository Layout
 - `claude-maratai-dev/` (v1.0.1) – Claude Code plugin for development workflows with
   agents and commands for project search, code review, specification creation, and
   web research. Includes deepwiki MCP server for GitHub repository documentation.
-- `claude-maratai-manager/` (v1.4.0) – Claude Code plugin for management workflows
+- `claude-maratai-manager/` (v1.5.0) – Claude Code plugin for management workflows
   with Atlassian integration (Jira & Confluence), Google Docs/Sheets export, and
   weekly reporting tools.
 - `opencode/` – OpenCode-compatible copies of the same prompts (folder names are
@@ -75,6 +75,10 @@ Command Reference (maratai-manager)
 - **`commands/week_report.md`** – weekly status writer. Summarizes recent work
   per project and prepares (but does not send) a Slack payload with the
   formatted report.
+- **`commands/update_jira_tickets.md`** – Jira ticket updater. Fetches tickets
+  with "In Progress" or "Planned" status, matches them against git commits from
+  the last 7 days, and drafts status update comments describing what was
+  implemented, what remains, and whether to split or change ticket status.
 
 Agent Reference (maratai-dev)
 -----------------------------
