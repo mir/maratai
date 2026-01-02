@@ -1,7 +1,6 @@
 ---
 description: Prepare weekly management report
 ---
-
 1. Isnpect what was changed in the repo for the past 7 days from the user perspective. Inspect code changes too, not only the commit messages. If the changes are related to eachnother - group them together.
 2. Create a report in the following format
 <report format>

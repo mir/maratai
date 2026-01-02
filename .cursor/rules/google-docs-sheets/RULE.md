@@ -1,8 +1,10 @@
 ---
-description: Export Google Docs and Google Sheets (spreadsheets) to Markdown files or stdout. Use when asked to fetch, download, or ingest Google Docs/Sheets content for summarization, analysis, or context loading. Tries gcloud ADC first with browser OAuth fallback.
+description: Export Google Docs and Google Sheets (spreadsheets) to Markdown files
+  or stdout. Use when asked to fetch, download, or ingest Google Docs/Sheets content
+  for summarization, analysis, or context loading. Tries gcloud ADC first with browser
+  OAuth fallback.
 alwaysApply: false
 ---
-
 # Google Docs & Sheets
 
 Export Google Docs and Google Sheets content as Markdown. Uses Google APIs with read-only scopes, prefers gcloud ADC, and falls back to browser OAuth when needed.
