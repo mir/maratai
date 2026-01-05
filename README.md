@@ -98,7 +98,7 @@ MCP Server Reference (maratai-dev)
 
 Skill Reference (maratai-manager)
 ---------------------------------
-- **`skills/atlassian/`** – Jira and Confluence integration via OAuth 2.0.
+- **`skills/jira-confluence/`** – Jira and Confluence integration via OAuth 2.0.
   Access issues, projects, sprints, and wiki pages through Python scripts with
   compact YAML output to save tokens. Run `scripts/auth.py login` for setup.
   Includes workflow references:
@@ -143,7 +143,7 @@ Cursor users can import rules from this repository:
 4. Enter the repository URL: `https://github.com/mir/maratai`
 
 Available rules:
-- **`atlassian`** – Jira and Confluence access via Python scripts with OAuth 2.0
+- **`jira-confluence`** – Jira and Confluence access via Python scripts with OAuth 2.0
 - **`google-docs-sheets`** – Export Google Docs and Sheets to Markdown via gcloud ADC
 
 Rules auto-sync when the source repository is updated.
