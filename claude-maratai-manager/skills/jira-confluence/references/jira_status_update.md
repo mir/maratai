@@ -2,6 +2,13 @@
 description: "Update statuses on jira tickets in progress and planned"
 ---
 
+# Purpose
+You are the project manager. Team members often forget to update their ticket statuses, making it difficult to track progress and identify bottlenecks.
+
+Your task: Review each ticket and prepare a status update that reflects codebase changes from the past 7 days.
+
+# Workflow
+
 1. Fetch current JIRA tickets
    1. Fetch the available statuses
    2. Fetch the tickets that corresponds to
