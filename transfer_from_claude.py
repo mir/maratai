@@ -403,7 +403,7 @@ def transfer_skill(
     *,
     target_subdir: str | None,
     target_filename: str,
-    frontmatter_fn: Callable[[dict], str],
+    frontmatter_fn: Callable[[dict, str], str],
     body_transform_fn: Callable[[str, str], str],
     subdirs: list[str]
 ) -> tuple[int, int, set[Path]]:
@@ -445,7 +445,7 @@ def transfer_skill(
         return 0, 1, valid_targets
 
     metadata, body = parse_frontmatter(content)
-    new_frontmatter = frontmatter_fn(metadata)
+    new_frontmatter = frontmatter_fn(metadata, skill_name)
     new_body = body_transform_fn(body, skill_name)
     new_content = new_frontmatter + new_body
 
@@ -479,7 +479,7 @@ def transfer_skill(
 # =============================================================================
 
 
-def generate_cursor_frontmatter(metadata: dict) -> str:
+def generate_cursor_frontmatter(metadata: dict, skill_name: str) -> str:
     """Generate Cursor-compliant YAML frontmatter for RULE.md."""
     cursor_meta = {}
 
@@ -492,9 +492,20 @@ def generate_cursor_frontmatter(metadata: dict) -> str:
     return f"---\n{yaml_str}---\n"
 
 
-def generate_opencode_skill_frontmatter(metadata: dict) -> str:
-    """Generate OpenCode-compliant YAML frontmatter for skills."""
-    return generate_opencode_preamble(metadata, 'skill')
+def generate_opencode_skill_frontmatter(metadata: dict, skill_name: str) -> str:
+    """Generate OpenCode-compliant YAML frontmatter for skills.
+
+    OpenCode requires:
+    - name: 1-64 chars, lowercase alphanumeric with hyphens (matches directory name)
+    - description: 1-1024 chars
+    """
+    opencode_meta = {'name': skill_name}
+
+    if 'description' in metadata:
+        opencode_meta['description'] = metadata['description']
+
+    yaml_str = yaml.dump(opencode_meta, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    return f"---\n{yaml_str}---\n"
 
 
 # =============================================================================

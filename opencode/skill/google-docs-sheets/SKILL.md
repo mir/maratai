@@ -1,4 +1,5 @@
 ---
+name: google-docs-sheets
 description: Export Google Docs and Google Sheets (spreadsheets) to Markdown files
   or stdout. Use when asked to fetch, download, or ingest Google Docs/Sheets content
   for summarization, analysis, or context loading. Tries gcloud ADC first with browser

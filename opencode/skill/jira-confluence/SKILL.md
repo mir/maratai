@@ -1,4 +1,5 @@
 ---
+name: jira-confluence
 description: Access Jira issues and Confluence pages via Python scripts with OAuth
   2.0 authentication. Use when user asks about Jira tickets, issues, bugs, stories,
   epics, sprints, or Confluence pages, wiki, documentation. Contains instructions
