@@ -4,7 +4,7 @@ description: "Analyze Jira tickets for common problems and propose cleanup actio
 
 ## Step 1: Fetch Tickets
 
-Fetch Jira tickets with the following statuses:
+Fetch Jira tickets with the following statuses for any user for the current project:
 - In Progress
 - Planned 
 - In Testing

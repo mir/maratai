@@ -1,8 +1,10 @@
 ---
-name: atlassian
-description: Access Jira issues and Confluence pages via Python scripts with OAuth 2.0 authentication. Use when user asks about Jira tickets, issues, bugs, stories, epics, sprints, or Confluence pages, wiki, documentation. Contains instructions to cleanup existing tickets, do status update of the tickets.
+description: Access Jira issues and Confluence pages via Python scripts with OAuth
+  2.0 authentication. Use when user asks about Jira tickets, issues, bugs, stories,
+  epics, sprints, or Confluence pages, wiki, documentation. Contains instructions
+  to cleanup existing tickets, do status update of the tickets.
+alwaysApply: false
 ---
-
 # Atlassian Skill
 
 Access Jira and Confluence content via Python scripts. All output is YAML format for minimal token usage.

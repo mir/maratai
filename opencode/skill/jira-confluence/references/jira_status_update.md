@@ -2,7 +2,9 @@
 description: "Update statuses on jira tickets in progress and planned"
 ---
 
-1. Fetch JIRA tickets with status 'In Progress' or 'Planned'
+1. Fetch current JIRA tickets
+   1. statuses: in progress, planned, testing
+   2. owner: any
 2. Get git commits from the last 7 days
 3. Match commits to tickets (inspect code changes if commit messages are unclear)
 4. For each ticket with related commits, draft a status update comment:
