@@ -16,8 +16,9 @@ Your task: Review each ticket and prepare a status update that reflects codebase
       2. owner: any
    3. Fetch comments corresponding to those tickets, because they may contain some status updates
 2. Get git commits from the last 7 days
-3. Match commits to tickets (inspect code changes if commit messages are unclear)
-4. For each ticket with related commits, draft a status update comment:
+3. Match commits to tickets
+4. Fetch the diffs for matching commits
+5. For each ticket with related commits, draft a status update comment:
    - What was asked to todo and implemented
      - Create a 1-sentence demo scenario how to check it out from the user point of view
    - What was implemented as an extra
@@ -29,4 +30,4 @@ Your task: Review each ticket and prepare a status update that reflects codebase
    - What remains unimplemented and still affects users
    - Whether to split the ticket (include draft descriptions)
    - Whether to change the ticket status
-5. Shortly explain unmatched commits
+6. Shortly explain unmatched commits
