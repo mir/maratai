@@ -10,7 +10,7 @@ Your task: Review each ticket and prepare a status update that reflects codebase
 # Workflow
 
 1. Fetch current JIRA tickets
-   1. Fetch the available statuses
+   1. Get available transitions for all issue (ticket) types
    2. Fetch the tickets that corresponds to
       1. planned, work in progress, testing, check, reconsider, qa, or done.
       2. owner: any
