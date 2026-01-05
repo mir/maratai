@@ -9,10 +9,9 @@ Your task: Analyze active tickets against the codebase to identify problems and 
 
 ## Step 1: Fetch Tickets
 
-Fetch Jira tickets with the following statuses for any user for the current project:
-- In Progress
-- Planned 
-- In Testing
+Fetch available statuses for the current project issues (tickets)
+
+Fetch Jira tickets with the statuses that corresponds to planned, in-progress, testing for any user for the current project:
 
 For each ticket, retrieve:
 - Title and description
