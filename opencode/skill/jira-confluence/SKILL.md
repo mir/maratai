@@ -2,20 +2,11 @@
 name: jira-confluence
 description: Access Jira issues and Confluence pages via Python scripts with OAuth
   2.0 authentication. Use when user asks about Jira tickets, issues, bugs, stories,
-  epics, sprints, or Confluence pages, wiki, documentation. Contains instructions
-  to cleanup existing tickets, do status update of the tickets.
+  epics, sprints, or Confluence pages, wiki, documentation.
 ---
 # Atlassian Skill
 
 Access Jira and Confluence content via Python scripts. All output is YAML format for minimal token usage.
-
-# Workflows
-
-## Ticket Cleanup (`references/jira_cleanup.md`)
-**Use when:** cleanup tickets, analyze tickets, stale tickets, stuck tickets, audit tickets, ticket hygiene, review backlog, find duplicates, outdated tickets
-
-## Status Update (`references/jira_status_update.md`)
-**Use when:** update ticket status, sync commits to tickets, what did I work on, progress update, weekly update, match commits to jira
 
 # OAuth Login
 ```bash

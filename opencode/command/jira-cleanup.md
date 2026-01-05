@@ -1,29 +1,28 @@
 ---
-description: "Analyze Jira tickets for common problems and propose cleanup actions"
+description: Analyze Jira tickets for common problems and propose cleanup actions
 ---
-
 # Purpose
 You are the project manager. Over time, Jira tickets accumulate issues: vague descriptions, stale discussions, incorrect statuses, and implemented features still marked as open.
 
 Your task: Analyze active tickets against the codebase to identify problems and propose cleanup actions (update descriptions, close completed work, split large tickets, etc.).
 
+# Workflow
+
 ## Step 1: Fetch Tickets
 
-Fetch available statuses for the current project issues (tickets)
-
-Fetch Jira tickets with the statuses that corresponds to planned, in-progress, testing for any user for the current project:
-
-For each ticket, retrieve:
-- Title and description
-- All comments
-- Current assignee and reporter
-- Labels and components
-- Linked issues
-- Created date and last updated date
+1. Fetch available statuses for the current project
+2. Fetch Jira tickets with statuses corresponding to planned, in-progress, testing for any user
+3. For each ticket, retrieve:
+   - Title and description
+   - All comments
+   - Current assignee and reporter
+   - Labels and components
+   - Linked issues
+   - Created date and last updated date
 
 ## Step 2: Explore Project Codebase
 
-Since this command runs from the project folder, explore the codebase to understand the current implementation state:
+Since this command runs from the project folder, explore the codebase to understand the current implementation state.
 
 ### Codebase Discovery
 - Identify the project structure and main components
@@ -31,7 +30,7 @@ Since this command runs from the project folder, explore the codebase to underst
 - Locate key source directories and entry points
 
 ### Map Tickets to Code
-For each fetched ticket, search the codebase for Code that implements or relates to the ticket's described feature/fix
+For each fetched ticket, search the codebase for code that implements or relates to the ticket's described feature/fix.
 
 ### Implementation Status Assessment
 Categorize each ticket's implementation state:
@@ -42,7 +41,7 @@ Categorize each ticket's implementation state:
 
 ## Step 3: Analyze Each Ticket
 
-Evaluate each ticket against these common problems, **incorporating code analysis findings**:
+Evaluate each ticket against these common problems, incorporating code analysis findings:
 
 ### Description Issues
 - **Missing acceptance criteria**: No clear definition of done
