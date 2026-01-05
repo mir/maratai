@@ -39,8 +39,8 @@ uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/jira.py 
 # Get comments
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/jira.py comments PROJ-123
 
-# Get available transitions for a ticket
-uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/jira.py transitions PROJ-123
+# List all statuses for issues (tickets) ia project
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/jira.py statuses PROJ
 ```
 
 Common JQL examples:

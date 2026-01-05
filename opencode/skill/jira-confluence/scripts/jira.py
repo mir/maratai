@@ -21,6 +21,7 @@ Commands:
     types <PROJECT>        - List available issue types for a project
     fields <PROJECT>       - List fields for an issue type
     transitions <KEY>      - Get available transitions for an issue
+    statuses <PROJECT>     - List all available statuses for a project
     comment <KEY> <BODY>   - Add a comment to an issue
     transition <KEY> <STATUS> - Transition an issue to a new status
     assign <KEY> <ID>      - Assign or unassign an issue
@@ -552,6 +553,68 @@ def cmd_transitions(args):
                     }
                     for t in transitions
                 ],
+            }
+        }
+
+        yaml_output(output)
+
+
+@command_handler
+def cmd_statuses(args):
+    """Get all available statuses for a project via MCP.
+
+    Uses JQL search to find issues and aggregate unique statuses,
+    since there's no direct MCP tool for project-level statuses.
+    """
+    cloud_id = get_cloud_id()
+
+    with mcp_client_context() as client:
+        # Search for issues in the project to discover statuses
+        # We get a sample of issues across different statuses
+        result = client.call_tool(
+            "searchJiraIssuesUsingJql",
+            {
+                "cloudId": cloud_id,
+                "jql": f"project = {args.project} ORDER BY status ASC",
+                "maxResults": 100,  # Get enough to capture all statuses
+            },
+        )
+        result, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
+
+        # Handle both dict with "issues" key and direct list of issues
+        if isinstance(result, list):
+            issues = result
+        else:
+            issues = result.get("issues", [])
+
+        # Extract unique statuses from issues
+        statuses_map = {}  # id -> status info
+        for issue in issues:
+            status = issue.get("fields", {}).get("status", {})
+            status_id = status.get("id")
+            if status_id and status_id not in statuses_map:
+                statuses_map[status_id] = {
+                    "id": status_id,
+                    "name": status.get("name"),
+                    "category": status.get("statusCategory", {}).get("name"),
+                    "description": status.get("description", ""),
+                }
+
+        # Sort by category then name for better organization
+        category_order = {"To Do": 0, "In Progress": 1, "Done": 2}
+        statuses_list = sorted(
+            statuses_map.values(),
+            key=lambda s: (category_order.get(s.get("category"), 99), s.get("name", "")),
+        )
+
+        output = {
+            "statuses": {
+                "project": args.project,
+                "total": len(statuses_list),
+                "note": "Statuses discovered from existing issues (may not include unused workflow statuses)",
+                "items": statuses_list,
             }
         }
 
@@ -1139,6 +1202,10 @@ def main():
     types_parser = subparsers.add_parser("types", help="List available issue types for a project")
     types_parser.add_argument("project", help="Project key (e.g., PROJ)")
 
+    # statuses command
+    statuses_parser = subparsers.add_parser("statuses", help="List all available statuses for a project")
+    statuses_parser.add_argument("project", help="Project key (e.g., PROJ)")
+
     # fields command
     fields_parser = subparsers.add_parser("fields", help="List fields for a project and issue type")
     fields_parser.add_argument("project", help="Project key (e.g., PROJ)")
@@ -1177,6 +1244,7 @@ def main():
         "comments": cmd_comments,
         "projects": cmd_projects,
         "transitions": cmd_transitions,
+        "statuses": cmd_statuses,
         "comment": cmd_comment,
         "transition": cmd_transition,
         "assign": cmd_assign,

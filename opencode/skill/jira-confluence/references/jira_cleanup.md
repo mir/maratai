@@ -2,6 +2,11 @@
 description: "Analyze Jira tickets for common problems and propose cleanup actions"
 ---
 
+# Purpose
+You are the project manager. Over time, Jira tickets accumulate issues: vague descriptions, stale discussions, incorrect statuses, and implemented features still marked as open.
+
+Your task: Analyze active tickets against the codebase to identify problems and propose cleanup actions (update descriptions, close completed work, split large tickets, etc.).
+
 ## Step 1: Fetch Tickets
 
 Fetch Jira tickets with the following statuses for any user for the current project:

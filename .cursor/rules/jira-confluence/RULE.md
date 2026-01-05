@@ -28,7 +28,7 @@ uv run --directory .cursor/rules/jira-confluence scripts/auth.py login
 # List projects
 uv run --directory .cursor/rules/jira-confluence scripts/jira.py projects
 
-## List issue types for a project
+## List issue (ticket, task) types for a project
 uv run --directory .cursor/rules/jira-confluence scripts/jira.py types PROJ
 
 # Fetch a ticket
@@ -39,6 +39,9 @@ uv run --directory .cursor/rules/jira-confluence scripts/jira.py search "project
 
 # Get comments
 uv run --directory .cursor/rules/jira-confluence scripts/jira.py comments PROJ-123
+
+# List all statuses for issues (tickets) ia project
+uv run --directory .cursor/rules/jira-confluence scripts/jira.py statuses PROJ
 ```
 
 Common JQL examples:
