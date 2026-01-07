@@ -16,9 +16,9 @@ Uses MCP client to communicate with Atlassian MCP server.
 Commands:
     get <PAGE_ID>         - Fetch a page with content
     search <CQL>          - Search pages using CQL
-    children <PAGE_ID>    - Get child pages
+    children <PAGE_ID>    - Get all descendant pages
     spaces                - List Confluence spaces
-    ancestors <PAGE_ID>   - Get parent pages
+    tree <PAGE_ID> [...]  - Download page tree(s) with nested folders
     export <CQL>          - Export pages to yaml/json/markdown files
 """
 
@@ -92,6 +92,11 @@ def format_page(page: dict, include_content: bool = True) -> dict:
         }
     elif space:
         result["space"] = {"id": space}
+
+    # Parent page ID (from API v2)
+    parent_id = page.get("parentId")
+    if parent_id:
+        result["parent_id"] = parent_id
 
     # Version/dates
     version = page.get("version")
@@ -173,8 +178,10 @@ def format_page_markdown(page: dict) -> str:
     if page.get("version"):
         lines.append(f"**Version:** {page['version']}  ")
 
-    # Ancestors (breadcrumb)
-    if page.get("ancestors"):
+    # Parent page info
+    if page.get("parent_id"):
+        lines.append(f"**Parent ID:** {page['parent_id']}  ")
+    elif page.get("ancestors"):
         breadcrumb = " > ".join([a.get("title", a.get("id", "")) for a in page["ancestors"]])
         lines.append(f"**Path:** {breadcrumb}  ")
 
@@ -264,42 +271,91 @@ def cmd_search(args):
         yaml_output(output)
 
 
-@command_handler
-def cmd_children(args):
-    """Get child pages via MCP."""
-    cloud_id = get_cloud_id()
+def fetch_all_descendants_cql(client, cloud_id: str, page_id: str, max_results: int = 500) -> list:
+    """Fetch all descendants using CQL via MCP with multiple queries.
 
-    with mcp_client_context() as client:
+    Uses ancestor= CQL query which is more reliable than getConfluencePageDescendants API.
+    Makes multiple calls with different ORDER BY clauses to maximize coverage since
+    the MCP endpoint limits results per call.
+    """
+    all_pages = []
+    seen_ids = set()
+
+    # Different order by clauses to get different result sets
+    order_variants = [
+        "",  # default order
+        " order by lastModified desc",
+        " order by lastModified asc",
+        " order by created desc",
+        " order by created asc",
+        " order by title asc",
+        " order by title desc",
+    ]
+
+    base_cql = f"ancestor={page_id}"
+
+    for order_by in order_variants:
+        if len(all_pages) >= max_results:
+            break
+
+        cql = base_cql + order_by
         result = client.call_tool(
-            "getConfluencePageDescendants",
+            "searchConfluenceUsingCql",
             {
                 "cloudId": cloud_id,
-                "pageId": args.page_id,
-                "maxResults": args.limit,
+                "cql": cql,
+                "maxResults": 50,
             },
         )
 
         result, error_msg = parse_mcp_result(result)
         if error_msg:
-            error_output(error_msg)
+            continue
 
-        children = result.get("results", result) if isinstance(result, dict) else result
+        results = result.get("results", [])
+        for p in results:
+            content = p.get("content", {})
+            page_id_found = content.get("id")
+            if page_id_found and page_id_found not in seen_ids:
+                seen_ids.add(page_id_found)
+                page_info = {
+                    "id": page_id_found,
+                    "title": p.get("title") or content.get("title"),
+                    "status": content.get("status", "current"),
+                    "parent_id": content.get("parentId"),
+                }
+                all_pages.append(page_info)
+
+        # Check if we got everything
+        total_size = result.get("totalSize", 0)
+        if len(all_pages) >= total_size:
+            break
+
+    return all_pages[:max_results]
+
+
+@command_handler
+def cmd_children(args):
+    """Get descendant pages using CQL ancestor= query."""
+    cloud_id = get_cloud_id()
+
+    with mcp_client_context() as client:
+        children = fetch_all_descendants_cql(client, cloud_id, args.page_id, args.limit)
 
         output = {
             "children": {
                 "parent_id": args.page_id,
-                "total": len(children) if isinstance(children, list) else 0,
+                "total": len(children),
                 "pages": [],
             }
         }
 
-        if isinstance(children, list):
-            for c in children:
-                output["children"]["pages"].append({
-                    "id": c.get("id"),
-                    "title": c.get("title"),
-                    "status": c.get("status"),
-                })
+        for c in children:
+            output["children"]["pages"].append({
+                "id": c.get("id"),
+                "title": c.get("title"),
+                "status": c.get("status"),
+            })
 
         yaml_output(output)
 
@@ -342,38 +398,202 @@ def cmd_spaces(args):
         yaml_output(output)
 
 
+def sanitize_folder_name(title: str, page_id: str) -> str:
+    """Create a safe folder name from page title and ID."""
+    safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:50]
+    return f"{safe_title}_{page_id}"
+
+
 @command_handler
-def cmd_ancestors(args):
-    """Get ancestor (parent) pages via MCP."""
+def cmd_tree(args):
+    """Download page tree(s) with proper nested folder structure."""
+    import os
+    import time
+
     cloud_id = get_cloud_id()
+    ext_map = {"yaml": "yaml", "json": "json", "markdown": "md"}
+    ext = ext_map.get(args.format, "md")
+    toc_entries = []  # [(depth, title, relative_path)]
+    downloaded_ids = set()  # Track downloaded pages to avoid duplicates
+    id_to_path = {}  # Map page_id -> folder_path for nested structure
+
+    # Adaptive rate limiting state
+    rate_state = {
+        "delay": args.delay,
+        "min_delay": args.delay,
+        "max_delay": 10.0,
+        "backoff_factor": 2.0,
+        "success_count": 0,
+        "success_threshold": 5,  # Decrease delay after N successes
+    }
+
+    def write_page(page: dict, output_path: str):
+        """Write a single page to file."""
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        if args.format == "markdown":
+            content = format_page_markdown(page)
+        elif args.format == "json":
+            content = json.dumps(page, indent=2)
+        else:  # yaml
+            content = yaml.dump({"page": page}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+        with open(output_path, "w") as f:
+            f.write(content)
+
+    def call_with_retry(client, tool_name: str, params: dict, max_retries: int = 3):
+        """Call MCP tool with exponential backoff retry on failure."""
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                result = client.call_tool(tool_name, params)
+                data, err = parse_mcp_result(result)
+                if err:
+                    raise Exception(err)
+                # Success - possibly decrease delay
+                rate_state["success_count"] += 1
+                if rate_state["success_count"] >= rate_state["success_threshold"]:
+                    rate_state["delay"] = max(rate_state["min_delay"], rate_state["delay"] / 1.5)
+                    rate_state["success_count"] = 0
+                return data, None
+            except Exception as e:
+                last_error = e
+                # Increase delay on failure
+                rate_state["delay"] = min(rate_state["max_delay"], rate_state["delay"] * rate_state["backoff_factor"])
+                rate_state["success_count"] = 0
+
+                if attempt < max_retries - 1:
+                    wait_time = rate_state["delay"] * (attempt + 1)
+                    print(f"Request failed, retrying in {wait_time:.1f}s (delay now {rate_state['delay']:.1f}s)...", file=sys.stderr)
+                    time.sleep(wait_time)
+                    # Reconnect by creating new client context handled by caller
+        return None, str(last_error)
+
+    def get_depth(folder_path: str) -> int:
+        """Calculate depth from folder path relative to output_dir."""
+        rel_path = os.path.relpath(folder_path, args.output_dir)
+        if rel_path == ".":
+            return 0
+        return rel_path.count(os.sep) + 1
+
+    def process_page(client, page_id: str, stats: dict, pending_queue: list):
+        """Process a single page and queue its children."""
+        if page_id in downloaded_ids:
+            return True
+
+        # Rate limit delay
+        if rate_state["delay"] > 0:
+            time.sleep(rate_state["delay"])
+
+        # Fetch page content
+        page_data, err = call_with_retry(
+            client, "getConfluencePage",
+            {"cloudId": cloud_id, "pageId": page_id, "includeBody": True}
+        )
+        if err:
+            print(f"Warning: Failed to fetch page {page_id}: {err}", file=sys.stderr)
+            return False
+
+        # Use parentId from API response for correct nesting
+        # page_data is JSON string, need to parse it
+        if isinstance(page_data, str):
+            import json as json_mod
+            page_data = json_mod.loads(page_data)
+
+        actual_parent_id = page_data.get("parentId")
+
+        # Determine parent folder path using actual parentId from API
+        if actual_parent_id and actual_parent_id in id_to_path:
+            parent_path = id_to_path[actual_parent_id]
+        else:
+            parent_path = args.output_dir  # Root page or parent not in our set
+
+        # Check max_depth based on nesting level (depth 0 = root, depth 1 = children, etc.)
+        depth = get_depth(parent_path)
+        if args.max_depth > 0 and depth > args.max_depth:
+            return True
+
+        formatted = format_page(page_data, include_content=True)
+        title = formatted.get("title", "Untitled")
+        folder_name = sanitize_folder_name(title, page_id)
+        folder_path = os.path.join(parent_path, folder_name)
+        file_path = os.path.join(folder_path, f"index.{ext}")
+
+        # Store path for children to reference
+        id_to_path[page_id] = folder_path
+
+        # Write page
+        write_page(formatted, file_path)
+        downloaded_ids.add(page_id)
+        stats["pages"] += 1
+        print(f"Downloaded ({stats['pages']}): {title} [delay: {rate_state['delay']:.1f}s]", file=sys.stderr)
+
+        # Track for TOC (depth is based on folder nesting)
+        relative_path = os.path.relpath(file_path, args.output_dir)
+        toc_depth = get_depth(folder_path) - 1  # -1 because root pages are depth 0
+        toc_entries.append((toc_depth, title, relative_path))
+
+        # Children are already discovered via CQL upfront, no need to fetch here
+        return True
+
+    # Main execution with recovery
+    os.makedirs(args.output_dir, exist_ok=True)
+    stats = {"pages": 0}
+
+    # Discover ALL descendants upfront using CQL (more reliable than getConfluencePageDescendants)
+    pending_queue = list(args.page_ids)
+    print(f"Discovering descendants for {len(args.page_ids)} root page(s)...", file=sys.stderr)
 
     with mcp_client_context() as client:
-        result = client.call_tool(
-            "getConfluencePage",
-            {
-                "cloudId": cloud_id,
-                "pageId": args.page_id,
-                "includeBody": False,
-            },
-        )
+        for root_id in args.page_ids:
+            descendants = fetch_all_descendants_cql(client, cloud_id, root_id, max_results=args.limit * 10)
+            for desc in descendants:
+                desc_id = desc.get("id")
+                if desc_id and desc_id not in pending_queue:
+                    pending_queue.append(desc_id)
 
-        result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+    print(f"Found {len(pending_queue)} pages to download", file=sys.stderr)
+    max_connection_retries = 5
+    connection_retry = 0
 
-        ancestors = result.get("ancestors", [])
+    while pending_queue and connection_retry < max_connection_retries:
+        try:
+            with mcp_client_context() as client:
+                while pending_queue:
+                    page_id = pending_queue.pop(0)
+                    success = process_page(client, page_id, stats, pending_queue)
+                    if not success:
+                        # Re-queue failed page for retry
+                        pending_queue.append(page_id)
+            connection_retry = 0  # Reset on successful completion
+        except Exception as e:
+            connection_retry += 1
+            wait_time = min(30, rate_state["delay"] * connection_retry * 2)
+            print(f"Connection lost: {e}. Reconnecting in {wait_time:.0f}s... (attempt {connection_retry}/{max_connection_retries})", file=sys.stderr)
+            print(f"Progress: {stats['pages']} pages downloaded, {len(pending_queue)} remaining", file=sys.stderr)
+            time.sleep(wait_time)
+            rate_state["delay"] = min(rate_state["max_delay"], rate_state["delay"] * 2)
 
-        output = {
-            "ancestors": {
-                "page_id": args.page_id,
-                "page_title": result.get("title"),
-                "parents": [
-                    {"id": a.get("id"), "title": a.get("title")} for a in ancestors
-                ],
-            }
+    # Generate TOC
+    if toc_entries:
+        toc_lines = ["# Table of Contents", ""]
+        for depth, title, path in toc_entries:
+            indent = "  " * depth
+            toc_lines.append(f"{indent}- [{title}]({path})")
+        toc_content = "\n".join(toc_lines) + "\n"
+        toc_path = os.path.join(args.output_dir, "toc.md")
+        with open(toc_path, "w") as f:
+            f.write(toc_content)
+
+    output = {
+        "tree": {
+            "root_page_ids": args.page_ids,
+            "pages_downloaded": stats["pages"],
+            "output_dir": args.output_dir,
+            "format": args.format,
         }
-
-        yaml_output(output)
+    }
+    yaml_output(output)
 
 
 @command_handler
@@ -493,8 +713,8 @@ def main():
         "--limit", "-l", type=int, default=25, help="Max results (default: 25)"
     )
 
-    # children command
-    children_parser = subparsers.add_parser("children", help="Get child pages")
+    # children command (returns all descendants, not just direct children)
+    children_parser = subparsers.add_parser("children", help="Get all descendant pages")
     children_parser.add_argument("page_id", help="Parent page ID")
     children_parser.add_argument(
         "--limit", "-l", type=int, default=50, help="Max results (default: 50)"
@@ -506,9 +726,25 @@ def main():
         "--limit", "-l", type=int, default=50, help="Max results (default: 50)"
     )
 
-    # ancestors command
-    ancestors_parser = subparsers.add_parser("ancestors", help="Get parent pages")
-    ancestors_parser.add_argument("page_id", help="Page ID")
+    # tree command
+    tree_parser = subparsers.add_parser("tree", help="Download page tree(s) with nested folders")
+    tree_parser.add_argument("page_ids", nargs='+', help="Root page ID(s) to download")
+    tree_parser.add_argument(
+        "--output-dir", "-o", required=True, help="Output directory (required)"
+    )
+    tree_parser.add_argument(
+        "--format", "-f", choices=["yaml", "json", "markdown"], default="markdown",
+        help="Output format (default: markdown)"
+    )
+    tree_parser.add_argument(
+        "--limit", "-l", type=int, default=100, help="Max children per page (default: 100)"
+    )
+    tree_parser.add_argument(
+        "--max-depth", type=int, default=10, help="Max recursion depth (default: 10, 0=unlimited)"
+    )
+    tree_parser.add_argument(
+        "--delay", "-d", type=float, default=0.5, help="Delay between requests in seconds (default: 0.5)"
+    )
 
     # export command
     export_parser = subparsers.add_parser("export", help="Export pages matching CQL query")
@@ -535,7 +771,7 @@ def main():
         "search": cmd_search,
         "children": cmd_children,
         "spaces": cmd_spaces,
-        "ancestors": cmd_ancestors,
+        "tree": cmd_tree,
         "export": cmd_export,
     }
 

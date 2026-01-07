@@ -120,7 +120,7 @@ uv run --directory .cursor/rules/jira-confluence scripts/confluence.py get 12345
 # Search with CQL
 uv run --directory .cursor/rules/jira-confluence scripts/confluence.py search "type=page AND space=TEAM"
 
-# Get child pages
+# Get all descendant pages (uses CQL ancestor= query for complete results)
 uv run --directory .cursor/rules/jira-confluence scripts/confluence.py children 123456789
 
 $ List spaces
@@ -133,9 +133,31 @@ Common CQL examples:
 - `creator=currentUser()` - My pages
 - `label='important'` - Pages with label
 
-# Get parent pages (ancestors)
+# Download page tree(s)
 ```bash
-uv run --directory .cursor/rules/jira-confluence scripts/confluence.py ancestors 123456789
+# Download a page and all its descendants with nested folders
+uv run --directory .cursor/rules/jira-confluence scripts/confluence.py tree 123456789 --output-dir ./exports/
+
+# Download multiple page trees (e.g., sibling pages in a space)
+uv run --directory .cursor/rules/jira-confluence scripts/confluence.py tree 123456789 987654321 --output-dir ./exports/
+
+# With JSON format instead of markdown
+uv run --directory .cursor/rules/jira-confluence scripts/confluence.py tree 123456789 --output-dir ./exports/ --format json
+
+# Limit recursion depth
+uv run --directory .cursor/rules/jira-confluence scripts/confluence.py tree 123456789 --output-dir ./exports/ --max-depth 3
+```
+
+Creates properly nested folder structure with `toc.md` table of contents:
+```
+exports/
+  toc.md                    # Table of contents with links
+  Page_Title_123/
+    index.md
+    Child_Page_456/
+      index.md
+      Grandchild_789/
+        index.md
 ```
 
 # Export pages to files
