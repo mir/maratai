@@ -12,7 +12,7 @@ Your task: Review each ticket and prepare a status update that reflects codebase
 
 ## Step 1: Fetch Current JIRA Tickets
 1. Get available statuses for all issue (ticket) types
-2. Fetch tickets with statuses: planned, work in progress, testing, check, reconsider, qa, or done
+2. Fetch tickets with statuses: planned, work in progress, testing, check, reconsider, qa
 3. Fetch comments for those tickets (may contain status updates)
 
 ## Step 2: Analyze Git History
