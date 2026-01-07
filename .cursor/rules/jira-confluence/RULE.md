@@ -31,7 +31,7 @@ uv run --directory .cursor/rules/jira-confluence scripts/jira.py search "project
 # Get comments
 uv run --directory .cursor/rules/jira-confluence scripts/jira.py comments PROJ-123
 
-# List all statuses for issues (tickets) ia project
+# List all statuses for issues (tickets) in a project
 uv run --directory .cursor/rules/jira-confluence scripts/jira.py statuses PROJ
 ```
 
@@ -123,7 +123,7 @@ uv run --directory .cursor/rules/jira-confluence scripts/confluence.py search "t
 # Get all descendant pages (uses CQL ancestor= query for complete results)
 uv run --directory .cursor/rules/jira-confluence scripts/confluence.py children 123456789
 
-$ List spaces
+# List spaces
 uv run --directory .cursor/rules/jira-confluence scripts/confluence.py spaces
 ```
 
@@ -172,27 +172,48 @@ uv run --directory .cursor/rules/jira-confluence scripts/confluence.py export "t
 uv run --directory .cursor/rules/jira-confluence scripts/confluence.py export "space=TEAM" --format json
 ```
 
+# Limitations
+
+## Jira JQL search limited to 100 results
+The Atlassian MCP server doesn't return pagination tokens for JQL search responses, so results are limited to 100 issues per query. For projects with more issues, use specific JQL filters:
+```bash
+# Filter by date range
+uv run --directory .cursor/rules/jira-confluence scripts/jira.py search "project=PROJ AND created >= -30d"
+
+# Filter by status
+uv run --directory .cursor/rules/jira-confluence scripts/jira.py search "project=PROJ AND status='In Progress'"
+
+# Filter by assignee
+uv run --directory .cursor/rules/jira-confluence scripts/jira.py search "project=PROJ AND assignee=currentUser()"
+```
+
+## Confluence CQL search supports pagination
+Confluence search properly paginates through all results. Use `--all` flag with search:
+```bash
+uv run --directory .cursor/rules/jira-confluence scripts/confluence.py search "space=TEAM" --all
+```
+
 # Troubleshooting
 
-# "Not authenticated" error
+## "Not authenticated" error
 Run the login command shown in Setup above.
 
-# "Token expired" error
+## "Token expired" error
 Run the login command again to re-authenticate. OAuth tokens auto-refresh, but refresh tokens can expire after extended periods of inactivity.
 
-# "No cloud ID" error
+## "No cloud ID" error
 Re-authenticate by running the login command shown in Setup above.
 
-# "Permission denied" on write operations
+## "Permission denied" on write operations
 Your OAuth token may lack write permissions. Re-authenticate to get new permissions:
 ```bash
 uv run --directory .cursor/rules/jira-confluence scripts/auth.py login
 ```
 
-# "Transition not found" error
+## "Transition not found" error
 The target status is not available from the current issue status. Use `transitions` command to see available options.
 
-# "Required field missing" or field validation errors
+## "Required field missing" or field validation errors
 Projects often have custom required fields (e.g., Story Points, Team). To discover required fields:
 ```bash
 uv run --directory .cursor/rules/jira-confluence scripts/jira.py fields PROJ --type Story

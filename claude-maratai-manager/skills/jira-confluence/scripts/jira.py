@@ -339,6 +339,39 @@ def extract_text_from_adf(adf: dict) -> str:
     return "".join(texts)
 
 
+def search_jql_paginated(
+    client, cloud_id: str, jql: str, max_results: int = 100
+) -> tuple[list, int]:
+    """Fetch results from JQL search.
+
+    Note: The Atlassian MCP server doesn't return pagination tokens for JQL search,
+    so we're limited to maxResults per call (max 100). True pagination is not possible.
+
+    Returns:
+        (issues_list, total_count) - list of issues and total fetched count
+    """
+    # MCP server doesn't support pagination for JQL - just get up to max_results (capped at 100)
+    actual_limit = min(max_results, 100)
+
+    params = {
+        "cloudId": cloud_id,
+        "jql": jql,
+        "maxResults": actual_limit,
+    }
+
+    result = client.call_tool("searchJiraIssuesUsingJql", params)
+    result, err = parse_mcp_result(result)
+    if err:
+        return [], 0
+
+    if isinstance(result, list):
+        issues = result
+    else:
+        issues = result.get("issues", [])
+
+    return issues, len(issues)
+
+
 @command_handler
 def cmd_get(args):
     """Fetch a single issue with all details via MCP."""
@@ -366,29 +399,36 @@ def cmd_search(args):
     cloud_id = get_cloud_id()
 
     with mcp_client_context() as client:
-        result = client.call_tool(
-            "searchJiraIssuesUsingJql",
-            {
-                "cloudId": cloud_id,
-                "jql": args.jql,
-                "maxResults": args.limit,
-            },
-        )
-
-        result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
-
-        # Handle both dict with "issues" key and direct list of issues
-        if isinstance(result, list):
-            issues = result
+        if args.all:
+            # Paginated search to fetch all results up to limit
+            issues, total_count = search_jql_paginated(
+                client, cloud_id, args.jql, max_results=args.limit
+            )
         else:
-            issues = result.get("issues", [])
+            # Single page search (faster for quick queries)
+            result = client.call_tool(
+                "searchJiraIssuesUsingJql",
+                {
+                    "cloudId": cloud_id,
+                    "jql": args.jql,
+                    "maxResults": args.limit,
+                },
+            )
+            result, error_msg = parse_mcp_result(result)
+            if error_msg:
+                error_output(error_msg)
+
+            # Handle both dict with "issues" key and direct list of issues
+            if isinstance(result, list):
+                issues = result
+            else:
+                issues = result.get("issues", [])
+            total_count = len(issues)
 
         output = {
             "search": {
                 "jql": args.jql,
-                "total": len(issues),
+                "total": total_count,
                 "returned": len(issues),
                 "issues": [],
             }
@@ -418,10 +458,6 @@ def cmd_search(args):
                 issue_info["created"] = fields.get("created")
 
             output["search"]["issues"].append(issue_info)
-
-        # Add pagination info (only if result is a dict with pagination info)
-        if isinstance(result, dict) and result.get("nextPageToken"):
-            output["search"]["has_more"] = True
 
         # Output based on format
         if args.format == "json":
@@ -569,25 +605,12 @@ def cmd_statuses(args):
     cloud_id = get_cloud_id()
 
     with mcp_client_context() as client:
-        # Search for issues in the project to discover statuses
-        # We get a sample of issues across different statuses
-        result = client.call_tool(
-            "searchJiraIssuesUsingJql",
-            {
-                "cloudId": cloud_id,
-                "jql": f"project = {args.project} ORDER BY status ASC",
-                "maxResults": 100,  # Get enough to capture all statuses
-            },
+        # Search for issues in the project to discover statuses with pagination
+        issues, _ = search_jql_paginated(
+            client, cloud_id,
+            f"project = {args.project} ORDER BY status ASC",
+            max_results=500  # Get enough to capture all statuses
         )
-        result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
-
-        # Handle both dict with "issues" key and direct list of issues
-        if isinstance(result, list):
-            issues = result
-        else:
-            issues = result.get("issues", [])
 
         # Extract unique statuses from issues
         statuses_map = {}  # id -> status info
@@ -1032,27 +1055,15 @@ def cmd_export(args):
     cloud_id = get_cloud_id()
 
     with mcp_client_context() as client:
-        # Search for issues using JQL
-        result = client.call_tool(
-            "searchJiraIssuesUsingJql",
-            {
-                "cloudId": cloud_id,
-                "jql": args.jql,
-                "limit": args.limit,
-            },
+        # Search for issues using JQL with pagination
+        issues, total_count = search_jql_paginated(
+            client, cloud_id, args.jql, max_results=args.limit
         )
 
-        result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
-
-        # Handle both dict with "issues" key and direct list of issues
-        if isinstance(result, list):
-            issues = result
-        else:
-            issues = result.get("issues", [])
         if not issues:
             error_output("No issues found matching the query")
+
+        print(f"Found {len(issues)} issues to export", file=sys.stderr)
 
         # Fetch full details for each issue
         exported_issues = []
@@ -1142,6 +1153,10 @@ def main():
     search_parser.add_argument(
         "--format", "-f", choices=["yaml", "json", "markdown"], default="yaml",
         help="Output format (default: yaml)"
+    )
+    search_parser.add_argument(
+        "--all", "-a", action="store_true",
+        help="Paginate through all results up to limit (default: single page)"
     )
 
     # comments command

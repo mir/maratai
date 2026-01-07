@@ -412,16 +412,17 @@ class AtlassianMCPClient:
         result = self._send_request("tools/list")
         return result.get("tools", [])
 
-    def call_tool(self, name: str, arguments: dict | None = None) -> Any:
+    def call_tool(self, name: str, arguments: dict | None = None, return_full_result: bool = False) -> Any:
         """
         Call a tool on the MCP server.
 
         Args:
             name: Tool name
             arguments: Tool arguments
+            return_full_result: If True, return full MCP result including metadata
 
         Returns:
-            Tool result content
+            Tool result content (or full result dict if return_full_result=True)
         """
         if not self._initialized:
             self.initialize()
@@ -434,6 +435,10 @@ class AtlassianMCPClient:
             params["arguments"] = {}
 
         result = self._send_request("tools/call", params)
+
+        # Return full result if requested (for debugging pagination)
+        if return_full_result:
+            return result
 
         # Extract content from result
         content = result.get("content", [])

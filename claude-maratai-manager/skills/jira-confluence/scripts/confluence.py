@@ -28,6 +28,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 
 # Add parent directory to path for common module
 sys.path.insert(0, str(Path(__file__).parent))
@@ -73,6 +74,56 @@ def html_to_text(html_content: str) -> str:
     text = text.strip()
 
     return text
+
+
+def extract_cursor_from_links(result: dict) -> str | None:
+    """Extract pagination cursor from _links.next URL."""
+    links = result.get("_links", {})
+    next_url = links.get("next")
+    if not next_url:
+        return None
+    parsed = urlparse(next_url)
+    params = parse_qs(parsed.query)
+    cursor_list = params.get("cursor", [])
+    return cursor_list[0] if cursor_list else None
+
+
+def search_cql_paginated(
+    client, cloud_id: str, cql: str, max_results: int = 500, per_page: int = 25
+) -> tuple[list, int]:
+    """Fetch results from CQL search with cursor pagination.
+
+    Returns:
+        (results_list, total_size) - list of search results and total available count
+    """
+    all_results = []
+    cursor = None
+    total_size = 0
+
+    while len(all_results) < max_results:
+        params = {
+            "cloudId": cloud_id,
+            "cql": cql,
+            "limit": min(per_page, max_results - len(all_results)),
+        }
+        if cursor:
+            params["cursor"] = cursor
+
+        result = client.call_tool("searchConfluenceUsingCql", params)
+        result, err = parse_mcp_result(result)
+        if err:
+            break
+
+        results = result.get("results", [])
+        all_results.extend(results)
+        total_size = result.get("totalSize", len(all_results))
+
+        # Get next cursor
+        cursor = extract_cursor_from_links(result)
+        if not cursor or not results:
+            break
+
+    return all_results, total_size
 
 
 def format_page(page: dict, include_content: bool = True) -> dict:
@@ -225,25 +276,31 @@ def cmd_search(args):
     cloud_id = get_cloud_id()
 
     with mcp_client_context() as client:
-        result = client.call_tool(
-            "searchConfluenceUsingCql",
-            {
-                "cloudId": cloud_id,
-                "cql": args.cql,
-                "maxResults": args.limit,
-            },
-        )
-
-        result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
-
-        results = result.get("results", [])
+        if args.all:
+            # Paginated search to fetch all results up to limit
+            results, total_size = search_cql_paginated(
+                client, cloud_id, args.cql, max_results=args.limit
+            )
+        else:
+            # Single page search (faster for quick queries)
+            result = client.call_tool(
+                "searchConfluenceUsingCql",
+                {
+                    "cloudId": cloud_id,
+                    "cql": args.cql,
+                    "limit": args.limit,
+                },
+            )
+            result, error_msg = parse_mcp_result(result)
+            if error_msg:
+                error_output(error_msg)
+            results = result.get("results", [])
+            total_size = result.get("totalSize", len(results))
 
         output = {
             "search": {
                 "cql": args.cql,
-                "total": result.get("totalSize", len(results)),
+                "total": total_size,
                 "returned": len(results),
                 "pages": [],
             }
@@ -272,66 +329,30 @@ def cmd_search(args):
 
 
 def fetch_all_descendants_cql(client, cloud_id: str, page_id: str, max_results: int = 500) -> list:
-    """Fetch all descendants using CQL via MCP with multiple queries.
+    """Fetch all descendants using CQL via MCP with cursor pagination.
 
     Uses ancestor= CQL query which is more reliable than getConfluencePageDescendants API.
-    Makes multiple calls with different ORDER BY clauses to maximize coverage since
-    the MCP endpoint limits results per call.
     """
+    cql = f"ancestor={page_id}"
+    results, _ = search_cql_paginated(client, cloud_id, cql, max_results=max_results)
+
     all_pages = []
     seen_ids = set()
 
-    # Different order by clauses to get different result sets
-    order_variants = [
-        "",  # default order
-        " order by lastModified desc",
-        " order by lastModified asc",
-        " order by created desc",
-        " order by created asc",
-        " order by title asc",
-        " order by title desc",
-    ]
+    for p in results:
+        content = p.get("content", {})
+        page_id_found = content.get("id")
+        if page_id_found and page_id_found not in seen_ids:
+            seen_ids.add(page_id_found)
+            page_info = {
+                "id": page_id_found,
+                "title": p.get("title") or content.get("title"),
+                "status": content.get("status", "current"),
+                "parent_id": content.get("parentId"),
+            }
+            all_pages.append(page_info)
 
-    base_cql = f"ancestor={page_id}"
-
-    for order_by in order_variants:
-        if len(all_pages) >= max_results:
-            break
-
-        cql = base_cql + order_by
-        result = client.call_tool(
-            "searchConfluenceUsingCql",
-            {
-                "cloudId": cloud_id,
-                "cql": cql,
-                "maxResults": 50,
-            },
-        )
-
-        result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            continue
-
-        results = result.get("results", [])
-        for p in results:
-            content = p.get("content", {})
-            page_id_found = content.get("id")
-            if page_id_found and page_id_found not in seen_ids:
-                seen_ids.add(page_id_found)
-                page_info = {
-                    "id": page_id_found,
-                    "title": p.get("title") or content.get("title"),
-                    "status": content.get("status", "current"),
-                    "parent_id": content.get("parentId"),
-                }
-                all_pages.append(page_info)
-
-        # Check if we got everything
-        total_size = result.get("totalSize", 0)
-        if len(all_pages) >= total_size:
-            break
-
-    return all_pages[:max_results]
+    return all_pages
 
 
 @command_handler
@@ -604,23 +625,15 @@ def cmd_export(args):
     cloud_id = get_cloud_id()
 
     with mcp_client_context() as client:
-        # Search for pages using CQL
-        result = client.call_tool(
-            "searchConfluenceUsingCql",
-            {
-                "cloudId": cloud_id,
-                "cql": args.cql,
-                "maxResults": args.limit,
-            },
+        # Search for pages using CQL with pagination
+        search_results, total_size = search_cql_paginated(
+            client, cloud_id, args.cql, max_results=args.limit
         )
 
-        result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
-
-        search_results = result.get("results", [])
         if not search_results:
             error_output("No pages found matching the query")
+
+        print(f"Found {len(search_results)} of {total_size} total pages", file=sys.stderr)
 
         # Fetch full details for each page
         exported_pages = []
@@ -711,6 +724,10 @@ def main():
     search_parser.add_argument("cql", help="CQL query string")
     search_parser.add_argument(
         "--limit", "-l", type=int, default=25, help="Max results (default: 25)"
+    )
+    search_parser.add_argument(
+        "--all", "-a", action="store_true",
+        help="Paginate through all results up to limit (default: single page)"
     )
 
     # children command (returns all descendants, not just direct children)
