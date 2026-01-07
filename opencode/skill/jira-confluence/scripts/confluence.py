@@ -25,8 +25,11 @@ Commands:
 import argparse
 import html
 import json
+import os
 import re
 import sys
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -42,9 +45,86 @@ from common import (
     parse_mcp_result,
     mcp_client_context,
     command_handler,
+    call_mcp_with_retry,
 )
 
+# ---------------------------------------------------------------------------
+# Configuration Constants
+# ---------------------------------------------------------------------------
+DEFAULT_DELAY = 0.5
+MAX_DELAY = 10.0
+BACKOFF_FACTOR = 2.0
+SUCCESS_THRESHOLD = 5
+MAX_RETRIES = 3
+MAX_CONNECTION_RETRIES = 5
+DEFAULT_PER_PAGE = 25
+DEFAULT_MAX_RESULTS = 500
 
+FORMAT_EXTENSIONS = {"yaml": "yaml", "json": "json", "markdown": "md"}
+
+
+# ---------------------------------------------------------------------------
+# Data Classes
+# ---------------------------------------------------------------------------
+@dataclass
+class RateLimitState:
+    """State for adaptive rate limiting."""
+    delay: float
+    min_delay: float
+    max_delay: float = MAX_DELAY
+    backoff_factor: float = BACKOFF_FACTOR
+    success_count: int = 0
+    success_threshold: int = SUCCESS_THRESHOLD
+
+
+@dataclass
+class DownloadStats:
+    """Statistics for tree download operations."""
+    pages_downloaded: int = 0
+    pages_failed: int = 0
+
+
+@dataclass
+class TreeState:
+    """State tracking for tree download operations."""
+    downloaded_ids: set = field(default_factory=set)
+    id_to_path: dict = field(default_factory=dict)
+    toc_entries: list = field(default_factory=list)  # [(depth, title, path)]
+
+
+# ---------------------------------------------------------------------------
+# Rate Limiting
+# ---------------------------------------------------------------------------
+class AdaptiveRateLimiter:
+    """Handles adaptive rate limiting with exponential backoff."""
+
+    def __init__(self, initial_delay: float = DEFAULT_DELAY):
+        self.state = RateLimitState(
+            delay=initial_delay,
+            min_delay=initial_delay
+        )
+
+    def wait(self):
+        """Apply current rate limit delay."""
+        if self.state.delay > 0:
+            time.sleep(self.state.delay)
+
+    def on_success(self):
+        """Decrease delay after consecutive successes."""
+        self.state.success_count += 1
+        if self.state.success_count >= self.state.success_threshold:
+            self.state.delay = max(self.state.min_delay, self.state.delay / 1.5)
+            self.state.success_count = 0
+
+    def on_failure(self):
+        """Increase delay on failure (exponential backoff)."""
+        self.state.delay = min(self.state.max_delay, self.state.delay * self.state.backoff_factor)
+        self.state.success_count = 0
+
+
+# ---------------------------------------------------------------------------
+# Utility Functions
+# ---------------------------------------------------------------------------
 def html_to_text(html_content: str) -> str:
     """Convert HTML content to plain text."""
     if not html_content:
@@ -419,149 +499,148 @@ def cmd_spaces(args):
         yaml_output(output)
 
 
-def sanitize_folder_name(title: str, page_id: str) -> str:
-    """Create a safe folder name from page title and ID."""
-    safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:50]
+# ---------------------------------------------------------------------------
+# File Writing Utilities
+# ---------------------------------------------------------------------------
+def sanitize_filename(title: str, page_id: str, max_length: int = 50) -> str:
+    """Create a safe filename from page title and ID."""
+    safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:max_length]
     return f"{safe_title}_{page_id}"
 
 
-@command_handler
-def cmd_tree(args):
-    """Download page tree(s) with proper nested folder structure."""
-    import os
-    import time
+def format_page_content(page: dict, output_format: str) -> str:
+    """Format page data to specified format string."""
+    if output_format == "markdown":
+        return format_page_markdown(page)
+    elif output_format == "json":
+        return json.dumps(page, indent=2)
+    else:  # yaml
+        return yaml.dump({"page": page}, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
-    cloud_id = get_cloud_id()
-    ext_map = {"yaml": "yaml", "json": "json", "markdown": "md"}
-    ext = ext_map.get(args.format, "md")
-    toc_entries = []  # [(depth, title, relative_path)]
-    downloaded_ids = set()  # Track downloaded pages to avoid duplicates
-    id_to_path = {}  # Map page_id -> folder_path for nested structure
 
-    # Adaptive rate limiting state
-    rate_state = {
-        "delay": args.delay,
-        "min_delay": args.delay,
-        "max_delay": 10.0,
-        "backoff_factor": 2.0,
-        "success_count": 0,
-        "success_threshold": 5,  # Decrease delay after N successes
-    }
+def write_page_to_file(page: dict, output_path: str, output_format: str):
+    """Write a page to file in specified format."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    content = format_page_content(page, output_format)
+    with open(output_path, "w") as f:
+        f.write(content)
 
-    def write_page(page: dict, output_path: str):
-        """Write a single page to file."""
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        if args.format == "markdown":
-            content = format_page_markdown(page)
-        elif args.format == "json":
-            content = json.dumps(page, indent=2)
-        else:  # yaml
-            content = yaml.dump({"page": page}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+def generate_toc(toc_entries: list, output_dir: str):
+    """Generate table of contents markdown file."""
+    if not toc_entries:
+        return
 
-        with open(output_path, "w") as f:
-            f.write(content)
+    toc_lines = ["# Table of Contents", ""]
+    for depth, title, path in toc_entries:
+        indent = "  " * depth
+        toc_lines.append(f"{indent}- [{title}]({path})")
 
-    def call_with_retry(client, tool_name: str, params: dict, max_retries: int = 3):
-        """Call MCP tool with exponential backoff retry on failure."""
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                result = client.call_tool(tool_name, params)
-                data, err = parse_mcp_result(result)
-                if err:
-                    raise Exception(err)
-                # Success - possibly decrease delay
-                rate_state["success_count"] += 1
-                if rate_state["success_count"] >= rate_state["success_threshold"]:
-                    rate_state["delay"] = max(rate_state["min_delay"], rate_state["delay"] / 1.5)
-                    rate_state["success_count"] = 0
-                return data, None
-            except Exception as e:
-                last_error = e
-                # Increase delay on failure
-                rate_state["delay"] = min(rate_state["max_delay"], rate_state["delay"] * rate_state["backoff_factor"])
-                rate_state["success_count"] = 0
+    toc_path = os.path.join(output_dir, "toc.md")
+    with open(toc_path, "w") as f:
+        f.write("\n".join(toc_lines) + "\n")
 
-                if attempt < max_retries - 1:
-                    wait_time = rate_state["delay"] * (attempt + 1)
-                    print(f"Request failed, retrying in {wait_time:.1f}s (delay now {rate_state['delay']:.1f}s)...", file=sys.stderr)
-                    time.sleep(wait_time)
-                    # Reconnect by creating new client context handled by caller
-        return None, str(last_error)
 
-    def get_depth(folder_path: str) -> int:
+# ---------------------------------------------------------------------------
+# Page Processor Class
+# ---------------------------------------------------------------------------
+class PageProcessor:
+    """Handles downloading and writing individual pages."""
+
+    def __init__(
+        self,
+        client,
+        cloud_id: str,
+        output_dir: str,
+        output_format: str,
+        max_depth: int,
+        rate_limiter: AdaptiveRateLimiter,
+        state: TreeState,
+        stats: DownloadStats
+    ):
+        self.client = client
+        self.cloud_id = cloud_id
+        self.output_dir = output_dir
+        self.output_format = output_format
+        self.max_depth = max_depth
+        self.rate_limiter = rate_limiter
+        self.state = state
+        self.stats = stats
+        self.ext = FORMAT_EXTENSIONS.get(output_format, "md")
+
+    def get_depth(self, folder_path: str) -> int:
         """Calculate depth from folder path relative to output_dir."""
-        rel_path = os.path.relpath(folder_path, args.output_dir)
-        if rel_path == ".":
-            return 0
-        return rel_path.count(os.sep) + 1
+        rel_path = os.path.relpath(folder_path, self.output_dir)
+        return 0 if rel_path == "." else rel_path.count(os.sep) + 1
 
-    def process_page(client, page_id: str, stats: dict, pending_queue: list):
-        """Process a single page and queue its children."""
-        if page_id in downloaded_ids:
+    def process(self, page_id: str) -> bool:
+        """Process a single page. Returns True on success."""
+        if page_id in self.state.downloaded_ids:
             return True
 
-        # Rate limit delay
-        if rate_state["delay"] > 0:
-            time.sleep(rate_state["delay"])
+        self.rate_limiter.wait()
 
         # Fetch page content
-        page_data, err = call_with_retry(
-            client, "getConfluencePage",
-            {"cloudId": cloud_id, "pageId": page_id, "includeBody": True}
+        page_data, err = call_mcp_with_retry(
+            self.client,
+            "getConfluencePage",
+            {"cloudId": self.cloud_id, "pageId": page_id, "includeBody": True},
+            self.rate_limiter
         )
         if err:
             print(f"Warning: Failed to fetch page {page_id}: {err}", file=sys.stderr)
             return False
 
-        # Use parentId from API response for correct nesting
-        # page_data is JSON string, need to parse it
+        # Parse if string
         if isinstance(page_data, str):
-            import json as json_mod
-            page_data = json_mod.loads(page_data)
+            page_data = json.loads(page_data)
 
-        actual_parent_id = page_data.get("parentId")
+        # Determine parent path using parentId from API
+        parent_id = page_data.get("parentId")
+        parent_path = self.state.id_to_path.get(parent_id, self.output_dir)
 
-        # Determine parent folder path using actual parentId from API
-        if actual_parent_id and actual_parent_id in id_to_path:
-            parent_path = id_to_path[actual_parent_id]
-        else:
-            parent_path = args.output_dir  # Root page or parent not in our set
-
-        # Check max_depth based on nesting level (depth 0 = root, depth 1 = children, etc.)
-        depth = get_depth(parent_path)
-        if args.max_depth > 0 and depth > args.max_depth:
+        # Check depth
+        depth = self.get_depth(parent_path)
+        if self.max_depth > 0 and depth > self.max_depth:
             return True
 
+        # Format and write
         formatted = format_page(page_data, include_content=True)
         title = formatted.get("title", "Untitled")
-        folder_name = sanitize_folder_name(title, page_id)
+        folder_name = sanitize_filename(title, page_id)
         folder_path = os.path.join(parent_path, folder_name)
-        file_path = os.path.join(folder_path, f"index.{ext}")
+        file_path = os.path.join(folder_path, f"index.{self.ext}")
 
-        # Store path for children to reference
-        id_to_path[page_id] = folder_path
+        self.state.id_to_path[page_id] = folder_path
+        write_page_to_file(formatted, file_path, self.output_format)
 
-        # Write page
-        write_page(formatted, file_path)
-        downloaded_ids.add(page_id)
-        stats["pages"] += 1
-        print(f"Downloaded ({stats['pages']}): {title} [delay: {rate_state['delay']:.1f}s]", file=sys.stderr)
+        self.state.downloaded_ids.add(page_id)
+        self.stats.pages_downloaded += 1
 
-        # Track for TOC (depth is based on folder nesting)
-        relative_path = os.path.relpath(file_path, args.output_dir)
-        toc_depth = get_depth(folder_path) - 1  # -1 because root pages are depth 0
-        toc_entries.append((toc_depth, title, relative_path))
+        # Track for TOC
+        toc_depth = self.get_depth(folder_path) - 1
+        relative_path = os.path.relpath(file_path, self.output_dir)
+        self.state.toc_entries.append((toc_depth, title, relative_path))
 
-        # Children are already discovered via CQL upfront, no need to fetch here
+        print(f"Downloaded ({self.stats.pages_downloaded}): {title} [delay: {self.rate_limiter.state.delay:.1f}s]", file=sys.stderr)
         return True
 
-    # Main execution with recovery
-    os.makedirs(args.output_dir, exist_ok=True)
-    stats = {"pages": 0}
 
-    # Discover ALL descendants upfront using CQL (more reliable than getConfluencePageDescendants)
+# ---------------------------------------------------------------------------
+# Command Handlers
+# ---------------------------------------------------------------------------
+@command_handler
+def cmd_tree(args):
+    """Download page tree(s) with proper nested folder structure."""
+    cloud_id = get_cloud_id()
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Initialize state using new classes
+    rate_limiter = AdaptiveRateLimiter(args.delay)
+    state = TreeState()
+    stats = DownloadStats()
+
+    # Discover all descendants upfront
     pending_queue = list(args.page_ids)
     print(f"Discovering descendants for {len(args.page_ids)} root page(s)...", file=sys.stderr)
 
@@ -574,54 +653,45 @@ def cmd_tree(args):
                     pending_queue.append(desc_id)
 
     print(f"Found {len(pending_queue)} pages to download", file=sys.stderr)
-    max_connection_retries = 5
-    connection_retry = 0
 
-    while pending_queue and connection_retry < max_connection_retries:
+    # Process pages with connection recovery
+    connection_retry = 0
+    while pending_queue and connection_retry < MAX_CONNECTION_RETRIES:
         try:
             with mcp_client_context() as client:
+                processor = PageProcessor(
+                    client, cloud_id, args.output_dir, args.format,
+                    args.max_depth, rate_limiter, state, stats
+                )
                 while pending_queue:
                     page_id = pending_queue.pop(0)
-                    success = process_page(client, page_id, stats, pending_queue)
-                    if not success:
-                        # Re-queue failed page for retry
-                        pending_queue.append(page_id)
+                    if not processor.process(page_id):
+                        pending_queue.append(page_id)  # Re-queue failed
             connection_retry = 0  # Reset on successful completion
         except Exception as e:
             connection_retry += 1
-            wait_time = min(30, rate_state["delay"] * connection_retry * 2)
-            print(f"Connection lost: {e}. Reconnecting in {wait_time:.0f}s... (attempt {connection_retry}/{max_connection_retries})", file=sys.stderr)
-            print(f"Progress: {stats['pages']} pages downloaded, {len(pending_queue)} remaining", file=sys.stderr)
+            wait_time = min(30, rate_limiter.state.delay * connection_retry * 2)
+            print(f"Connection lost: {e}. Reconnecting in {wait_time:.0f}s... (attempt {connection_retry}/{MAX_CONNECTION_RETRIES})", file=sys.stderr)
+            print(f"Progress: {stats.pages_downloaded} pages downloaded, {len(pending_queue)} remaining", file=sys.stderr)
             time.sleep(wait_time)
-            rate_state["delay"] = min(rate_state["max_delay"], rate_state["delay"] * 2)
+            rate_limiter.on_failure()
 
     # Generate TOC
-    if toc_entries:
-        toc_lines = ["# Table of Contents", ""]
-        for depth, title, path in toc_entries:
-            indent = "  " * depth
-            toc_lines.append(f"{indent}- [{title}]({path})")
-        toc_content = "\n".join(toc_lines) + "\n"
-        toc_path = os.path.join(args.output_dir, "toc.md")
-        with open(toc_path, "w") as f:
-            f.write(toc_content)
+    generate_toc(state.toc_entries, args.output_dir)
 
-    output = {
+    yaml_output({
         "tree": {
             "root_page_ids": args.page_ids,
-            "pages_downloaded": stats["pages"],
+            "pages_downloaded": stats.pages_downloaded,
             "output_dir": args.output_dir,
             "format": args.format,
         }
-    }
-    yaml_output(output)
+    })
 
 
 @command_handler
 def cmd_export(args):
     """Export pages matching CQL query to files or stdout."""
-    import os
-
     cloud_id = get_cloud_id()
 
     with mcp_client_context() as client:
@@ -645,11 +715,7 @@ def cmd_export(args):
             try:
                 full_page = client.call_tool(
                     "getConfluencePage",
-                    {
-                        "cloudId": cloud_id,
-                        "pageId": page_id,
-                        "includeBody": True,
-                    },
+                    {"cloudId": cloud_id, "pageId": page_id, "includeBody": True},
                 )
                 full_page, err = parse_mcp_result(full_page)
                 if err:
@@ -666,41 +732,29 @@ def cmd_export(args):
         # Output based on format
         if args.output_dir:
             os.makedirs(args.output_dir, exist_ok=True)
-
-            ext_map = {"yaml": "yaml", "json": "json", "markdown": "md"}
-            ext = ext_map.get(args.format, "yaml")
+            ext = FORMAT_EXTENSIONS.get(args.format, "yaml")
+            filenames = []
 
             for page in exported_pages:
-                # Sanitize title for filename
                 title = page.get("title", page.get("id", "untitled"))
-                safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:50]
-                filename = f"{safe_title}_{page.get('id', '')}.{ext}"
+                filename = f"{sanitize_filename(title, page.get('id', ''))}.{ext}"
                 filepath = os.path.join(args.output_dir, filename)
+                write_page_to_file(page, filepath, args.format)
+                filenames.append(filename)
 
-                if args.format == "markdown":
-                    file_content = format_page_markdown(page)
-                elif args.format == "json":
-                    file_content = json.dumps(page, indent=2)
-                else:  # yaml
-                    file_content = yaml.dump({"page": page}, default_flow_style=False, allow_unicode=True, sort_keys=False)
-
-                with open(filepath, "w") as f:
-                    f.write(file_content)
-
-            output = {
+            yaml_output({
                 "export": {
                     "total": len(exported_pages),
                     "format": args.format,
                     "output_dir": args.output_dir,
-                    "files": [f"{re.sub(r'[^\\w\\s-]', '', p.get('title', p.get('id', 'untitled'))).strip().replace(' ', '_')[:50]}_{p.get('id', '')}.{ext}" for p in exported_pages],
+                    "files": filenames,
                 }
-            }
-            yaml_output(output)
+            })
         else:
             # Output to stdout
             if args.format == "markdown":
                 for page in exported_pages:
-                    print(format_page_markdown(page))
+                    print(format_page_content(page, "markdown"))
                     print("\n---\n")
             elif args.format == "json":
                 print(json.dumps({"pages": exported_pages}, indent=2))

@@ -394,3 +394,44 @@ def command_handler(func: Callable) -> Callable:
             sys.exit(1)
 
     return wrapper
+
+
+def call_mcp_with_retry(
+    client,
+    tool_name: str,
+    params: dict,
+    rate_limiter: Any = None,
+    max_retries: int = 3
+) -> tuple[dict | list | None, str | None]:
+    """
+    Call MCP tool with exponential backoff retry on failure.
+
+    Args:
+        client: MCP client instance
+        tool_name: Name of the MCP tool to call
+        params: Parameters to pass to the tool
+        rate_limiter: Optional AdaptiveRateLimiter instance for rate state updates
+        max_retries: Maximum number of retry attempts
+
+    Returns:
+        (parsed_result, error_message) - error_message is None if successful
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            result = client.call_tool(tool_name, params)
+            data, err = parse_mcp_result(result)
+            if err:
+                raise Exception(err)
+            if rate_limiter:
+                rate_limiter.on_success()
+            return data, None
+        except Exception as e:
+            last_error = e
+            if rate_limiter:
+                rate_limiter.on_failure()
+            if attempt < max_retries - 1:
+                wait_time = (rate_limiter.state.delay if rate_limiter else 1.0) * (attempt + 1)
+                print(f"Request failed, retrying in {wait_time:.1f}s...", file=sys.stderr)
+                time.sleep(wait_time)
+    return None, str(last_error)
