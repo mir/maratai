@@ -36,6 +36,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 # Add parent directory to path for common module
 sys.path.insert(0, str(Path(__file__).parent))
@@ -53,13 +54,14 @@ from common import (
 def parse_jira_error(error: Exception) -> dict:
     """Parse MCP/Jira errors into user-friendly format."""
     import re
+
     error_str = str(error)
     result = {"message": error_str}
 
     # Parse MCP validation errors
     if "Invalid arguments" in error_str:
         try:
-            match = re.search(r'\[.*\]', error_str, re.DOTALL)
+            match = re.search(r"\[.*\]", error_str, re.DOTALL)
             if match:
                 errors = json.loads(match.group())
                 fields = []
@@ -85,9 +87,9 @@ def parse_jira_error(error: Exception) -> dict:
                 depth = 0
                 end = start
                 for i, c in enumerate(error_str[start:], start):
-                    if c == '{':
+                    if c == "{":
                         depth += 1
-                    elif c == '}':
+                    elif c == "}":
                         depth -= 1
                         if depth == 0:
                             end = i + 1
@@ -121,24 +123,31 @@ def parse_jira_error(error: Exception) -> dict:
                         "Field is not editable",
                     ]
                 elif "create" in error_str.lower():
-                    result["message"] = "Failed to create issue - missing or invalid field"
+                    result["message"] = (
+                        "Failed to create issue - missing or invalid field"
+                    )
                     result["possible_causes"] = [
                         "Required field missing",
                         "Invalid issue type",
                         "Field value has wrong format",
                     ]
-            result["hint"] = "Run 'jira.py fields <PROJECT> --type <TYPE>' to see available fields"
+            result["hint"] = (
+                "Run 'jira.py fields <PROJECT> --type <TYPE>' to see available fields"
+            )
 
     return result
 
 
-def jira_error_output(error: Exception) -> None:
-    """Output parsed Jira error as YAML."""
+def jira_error_output(error: Exception) -> NoReturn:
+    """Output parsed Jira error as YAML and exit."""
     import yaml
+
     parsed = parse_jira_error(error)
     # If we parsed additional info (fields, hint), output as structured error
     if len(parsed) > 1:
-        yaml.dump({"error": parsed}, sys.stderr, default_flow_style=False, allow_unicode=True)
+        yaml.dump(
+            {"error": parsed}, sys.stderr, default_flow_style=False, allow_unicode=True
+        )
         sys.exit(1)
     else:
         error_output(parsed.get("message", str(error)))
@@ -210,7 +219,9 @@ def format_issue(issue: dict, include_comments: bool = True) -> dict:
                 {
                     "author": format_user(c.get("author")),
                     "created": c.get("created"),
-                    "body": extract_text_from_adf(c.get("body")) if isinstance(c.get("body"), dict) else c.get("body"),
+                    "body": extract_text_from_adf(c.get("body"))
+                    if isinstance(c.get("body"), dict)
+                    else c.get("body"),
                 }
                 for c in comments
             ]
@@ -259,7 +270,9 @@ def format_search_markdown(output: dict) -> str:
         assignee_name = assignee.get("name", "") if assignee else "Unassigned"
         # Escape pipe characters in summary
         summary = summary.replace("|", "\\|")
-        lines.append(f"| {key} | {issue_type} | {status} | {summary} | {assignee_name} |")
+        lines.append(
+            f"| {key} | {issue_type} | {status} | {summary} | {assignee_name} |"
+        )
 
     lines.append("")
     return "\n".join(lines)
@@ -267,6 +280,7 @@ def format_search_markdown(output: dict) -> str:
 
 def format_issue_markdown(issue: dict) -> str:
     """Format issue as markdown document."""
+
     def get_user_name(user_obj):
         if not user_obj:
             return "N/A"
@@ -288,7 +302,9 @@ def format_issue_markdown(issue: dict) -> str:
 
     # Parent link
     if issue.get("parent"):
-        lines.append(f"**Parent:** {issue['parent'].get('key', '')} - {issue['parent'].get('summary', '')}  ")
+        lines.append(
+            f"**Parent:** {issue['parent'].get('key', '')} - {issue['parent'].get('summary', '')}  "
+        )
 
     # Labels
     if issue.get("labels"):
@@ -361,13 +377,15 @@ def search_jql_paginated(
 
     result = client.call_tool("searchJiraIssuesUsingJql", params)
     result, err = parse_mcp_result(result)
-    if err:
+    if err or result is None:
         return [], 0
 
     if isinstance(result, list):
         issues = result
-    else:
+    elif isinstance(result, dict):
         issues = result.get("issues", [])
+    else:
+        return [], 0
 
     return issues, len(issues)
 
@@ -387,8 +405,9 @@ def cmd_get(args):
         )
 
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(result, dict):
+            error_output(error_msg or "Invalid response format")
+        assert isinstance(result, dict)  # type narrowing for ty
 
         yaml_output({"issue": format_issue(result)})
 
@@ -415,14 +434,16 @@ def cmd_search(args):
                 },
             )
             result, error_msg = parse_mcp_result(result)
-            if error_msg:
-                error_output(error_msg)
+            if error_msg or result is None:
+                error_output(error_msg or "Invalid response format")
 
             # Handle both dict with "issues" key and direct list of issues
             if isinstance(result, list):
                 issues = result
-            else:
+            elif isinstance(result, dict):
                 issues = result.get("issues", [])
+            else:
+                issues = []
             total_count = len(issues)
 
         output = {
@@ -483,8 +504,8 @@ def cmd_comments(args):
         )
 
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(result, dict):
+            error_output(error_msg or "Invalid response format")
 
         fields = result.get("fields", {})
         comment_data = fields.get("comment", {})
@@ -500,9 +521,11 @@ def cmd_comments(args):
                         "author": format_user(c.get("author")),
                         "created": c.get("created"),
                         "updated": c.get("updated"),
-                        "body": extract_text_from_adf(c.get("body")) if isinstance(c.get("body"), dict) else c.get("body"),
+                        "body": extract_text_from_adf(c.get("body"))
+                        if isinstance(c.get("body"), dict)
+                        else c.get("body"),
                     }
-                    for c in comments[:args.limit]
+                    for c in comments[: args.limit]
                 ],
             }
         }
@@ -525,8 +548,8 @@ def cmd_projects(args):
         )
 
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or result is None:
+            error_output(error_msg or "Invalid response format")
 
         projects = result.get("values", result) if isinstance(result, dict) else result
 
@@ -539,12 +562,14 @@ def cmd_projects(args):
 
         if isinstance(projects, list):
             for p in projects:
-                output["projects"]["items"].append({
-                    "id": p.get("id"),
-                    "key": p.get("key"),
-                    "name": p.get("name"),
-                    "type": p.get("projectTypeKey"),
-                })
+                output["projects"]["items"].append(
+                    {
+                        "id": p.get("id"),
+                        "key": p.get("key"),
+                        "name": p.get("name"),
+                        "type": p.get("projectTypeKey"),
+                    }
+                )
 
         yaml_output(output)
 
@@ -561,8 +586,8 @@ def cmd_transitions(args):
             {"cloudId": cloud_id, "issueIdOrKey": args.key},
         )
         issue_result, error_msg = parse_mcp_result(issue_result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(issue_result, dict):
+            error_output(error_msg or "Invalid response format")
         current_status = issue_result.get("fields", {}).get("status", {}).get("name")
 
         # Get available transitions
@@ -571,8 +596,8 @@ def cmd_transitions(args):
             {"cloudId": cloud_id, "issueIdOrKey": args.key},
         )
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(result, dict):
+            error_output(error_msg or "Invalid response format")
 
         transitions = result.get("transitions", [])
 
@@ -607,9 +632,10 @@ def cmd_statuses(args):
     with mcp_client_context() as client:
         # Search for issues in the project to discover statuses with pagination
         issues, _ = search_jql_paginated(
-            client, cloud_id,
+            client,
+            cloud_id,
             f"project = {args.project} ORDER BY status ASC",
-            max_results=500  # Get enough to capture all statuses
+            max_results=500,  # Get enough to capture all statuses
         )
 
         # Extract unique statuses from issues
@@ -629,7 +655,10 @@ def cmd_statuses(args):
         category_order = {"To Do": 0, "In Progress": 1, "Done": 2}
         statuses_list = sorted(
             statuses_map.values(),
-            key=lambda s: (category_order.get(s.get("category"), 99), s.get("name", "")),
+            key=lambda s: (
+                category_order.get(s.get("category"), 99),
+                s.get("name", ""),
+            ),
         )
 
         output = {
@@ -659,8 +688,8 @@ def cmd_comment(args):
             },
         )
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            jira_error_output(Exception(error_msg))
+        if error_msg or not isinstance(result, dict):
+            jira_error_output(Exception(error_msg or "Invalid response format"))
 
         output = {
             "comment": {
@@ -686,8 +715,8 @@ def cmd_transition(args):
             {"cloudId": cloud_id, "issueIdOrKey": args.key},
         )
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            jira_error_output(Exception(error_msg))
+        if error_msg or not isinstance(result, dict):
+            jira_error_output(Exception(error_msg or "Invalid response format"))
 
         transitions = result.get("transitions", [])
 
@@ -753,8 +782,8 @@ def cmd_assign(args):
             # Get current user's account ID
             user_info = client.call_tool("atlassianUserInfo", {})
             user_info, error_msg = parse_mcp_result(user_info)
-            if error_msg:
-                jira_error_output(Exception(error_msg))
+            if error_msg or not isinstance(user_info, dict):
+                jira_error_output(Exception(error_msg or "Invalid response format"))
             assignee_id = user_info.get("account_id")
         else:
             assignee_id = args.account_id
@@ -765,7 +794,9 @@ def cmd_assign(args):
             {
                 "cloudId": cloud_id,
                 "issueIdOrKey": args.key,
-                "fields": {"assignee": {"accountId": assignee_id} if assignee_id else None},
+                "fields": {
+                    "assignee": {"accountId": assignee_id} if assignee_id else None
+                },
             },
         )
         _, error_msg = parse_mcp_result(result)
@@ -810,7 +841,7 @@ def cmd_create(args):
             tool_args["description"] = args.description
 
         if args.labels:
-            tool_args["labels"] = [l.strip() for l in args.labels.split(",")]
+            tool_args["labels"] = [label.strip() for label in args.labels.split(",")]
 
         if args.assignee:
             tool_args["assigneeAccountId"] = args.assignee
@@ -831,8 +862,8 @@ def cmd_create(args):
         # Create issue
         result = client.call_tool("createJiraIssue", tool_args)
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            jira_error_output(Exception(error_msg))
+        if error_msg or not isinstance(result, dict):
+            jira_error_output(Exception(error_msg or "Invalid response format"))
 
         output = {
             "created": {
@@ -904,8 +935,8 @@ def cmd_types(args):
             {"cloudId": cloud_id, "projectIdOrKey": args.project},
         )
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(result, dict):
+            error_output(error_msg or "Invalid response format")
 
         issue_types = result.get("issueTypes", [])
 
@@ -940,18 +971,21 @@ def cmd_fields(args):
             {"cloudId": cloud_id, "projectIdOrKey": args.project},
         )
         types_result, error_msg = parse_mcp_result(types_result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(types_result, dict):
+            error_output(error_msg or "Invalid response format")
 
         issue_type_id = None
-        for t in types_result.get("issueTypes", []):
+        issue_types_list = types_result.get("issueTypes", [])
+        for t in issue_types_list:
             if t.get("name", "").lower() == args.type.lower():
                 issue_type_id = t.get("id")
                 break
 
         if not issue_type_id:
-            available = [t.get("name") for t in types_result.get("issueTypes", [])]
-            error_output(f"Issue type '{args.type}' not found. Available: {', '.join(available)}")
+            available = [t.get("name") for t in issue_types_list]
+            error_output(
+                f"Issue type '{args.type}' not found. Available: {', '.join(available)}"
+            )
 
         # Get field metadata
         result = client.call_tool(
@@ -963,13 +997,15 @@ def cmd_fields(args):
             },
         )
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(result, dict):
+            error_output(error_msg or "Invalid response format")
 
         fields = result.get("fields", [])
 
         # Sort: required first, then by name
-        fields_sorted = sorted(fields, key=lambda f: (not f.get("required", False), f.get("name", "")))
+        fields_sorted = sorted(
+            fields, key=lambda f: (not f.get("required", False), f.get("name", ""))
+        )
 
         output = {
             "fields": {
@@ -992,13 +1028,13 @@ def cmd_fields(args):
 
 
 @command_handler
-def cmd_me(args):
+def cmd_me(_args):
     """Show current user info via MCP."""
     with mcp_client_context() as client:
         result = client.call_tool("atlassianUserInfo", {})
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(result, dict):
+            error_output(error_msg or "Invalid response format")
 
         output = {
             "user": {
@@ -1022,8 +1058,8 @@ def cmd_lookup(args):
             {"cloudId": cloud_id, "searchString": args.query},
         )
         result, error_msg = parse_mcp_result(result)
-        if error_msg:
-            error_output(error_msg)
+        if error_msg or not isinstance(result, dict):
+            error_output(error_msg or "Invalid response format")
 
         # Extract users from nested structure: result.users.users
         users_data = result.get("users", {})
@@ -1078,8 +1114,11 @@ def cmd_export(args):
                     },
                 )
                 full_issue, err = parse_mcp_result(full_issue)
-                if err:
-                    print(f"Warning: Failed to fetch {issue_key}: {err}", file=sys.stderr)
+                if err or not isinstance(full_issue, dict):
+                    print(
+                        f"Warning: Failed to fetch {issue_key}: {err or 'Invalid format'}",
+                        file=sys.stderr,
+                    )
                     continue
                 formatted = format_issue(full_issue, include_comments=True)
                 exported_issues.append(formatted)
@@ -1107,7 +1146,12 @@ def cmd_export(args):
                 elif args.format == "json":
                     content = json.dumps(issue, indent=2)
                 else:  # yaml
-                    content = yaml_lib.dump({"issue": issue}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    content = yaml_lib.dump(
+                        {"issue": issue},
+                        default_flow_style=False,
+                        allow_unicode=True,
+                        sort_keys=False,
+                    )
 
                 with open(filepath, "w") as f:
                     f.write(content)
@@ -1130,7 +1174,14 @@ def cmd_export(args):
             elif args.format == "json":
                 print(json.dumps({"issues": exported_issues}, indent=2))
             else:  # yaml
-                print(yaml_lib.dump({"issues": exported_issues}, default_flow_style=False, allow_unicode=True, sort_keys=False))
+                print(
+                    yaml_lib.dump(
+                        {"issues": exported_issues},
+                        default_flow_style=False,
+                        allow_unicode=True,
+                        sort_keys=False,
+                    )
+                )
 
 
 def main():
@@ -1151,16 +1202,23 @@ def main():
         "--limit", "-l", type=int, default=25, help="Max results (default: 25)"
     )
     search_parser.add_argument(
-        "--format", "-f", choices=["yaml", "json", "markdown"], default="yaml",
-        help="Output format (default: yaml)"
+        "--format",
+        "-f",
+        choices=["yaml", "json", "markdown"],
+        default="yaml",
+        help="Output format (default: yaml)",
     )
     search_parser.add_argument(
-        "--all", "-a", action="store_true",
-        help="Paginate through all results up to limit (default: single page)"
+        "--all",
+        "-a",
+        action="store_true",
+        help="Paginate through all results up to limit (default: single page)",
     )
 
     # comments command
-    comments_parser = subparsers.add_parser("comments", help="Get comments for an issue")
+    comments_parser = subparsers.add_parser(
+        "comments", help="Get comments for an issue"
+    )
     comments_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
     comments_parser.add_argument(
         "--limit", "-l", type=int, default=50, help="Max comments (default: 50)"
@@ -1173,7 +1231,9 @@ def main():
     )
 
     # transitions command
-    transitions_parser = subparsers.add_parser("transitions", help="Get available transitions for an issue")
+    transitions_parser = subparsers.add_parser(
+        "transitions", help="Get available transitions for an issue"
+    )
     transitions_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
 
     # comment command
@@ -1182,49 +1242,78 @@ def main():
     comment_parser.add_argument("body", help="Comment text")
 
     # transition command
-    transition_parser = subparsers.add_parser("transition", help="Transition an issue to a new status")
+    transition_parser = subparsers.add_parser(
+        "transition", help="Transition an issue to a new status"
+    )
     transition_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
-    transition_parser.add_argument("status", nargs="?", help="Target status name (e.g., 'In Progress')")
-    transition_parser.add_argument("--id", help="Transition ID (alternative to status name)")
+    transition_parser.add_argument(
+        "status", nargs="?", help="Target status name (e.g., 'In Progress')"
+    )
+    transition_parser.add_argument(
+        "--id", help="Transition ID (alternative to status name)"
+    )
 
     # assign command
     assign_parser = subparsers.add_parser("assign", help="Assign or unassign an issue")
     assign_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
     assign_parser.add_argument("account_id", nargs="?", help="Account ID to assign to")
     assign_parser.add_argument("--me", action="store_true", help="Assign to yourself")
-    assign_parser.add_argument("--unassign", action="store_true", help="Remove assignee")
+    assign_parser.add_argument(
+        "--unassign", action="store_true", help="Remove assignee"
+    )
 
     # create command
     create_parser = subparsers.add_parser("create", help="Create a new issue")
     create_parser.add_argument("project", help="Project key (e.g., PROJ)")
-    create_parser.add_argument("--type", "-t", required=True, help="Issue type (e.g., Story, Bug, Task)")
-    create_parser.add_argument("--summary", "-s", required=True, help="Issue summary/title")
+    create_parser.add_argument(
+        "--type", "-t", required=True, help="Issue type (e.g., Story, Bug, Task)"
+    )
+    create_parser.add_argument(
+        "--summary", "-s", required=True, help="Issue summary/title"
+    )
     create_parser.add_argument("--description", "-d", help="Issue description")
-    create_parser.add_argument("--priority", "-p", help="Priority (e.g., High, Medium, Low)")
+    create_parser.add_argument(
+        "--priority", "-p", help="Priority (e.g., High, Medium, Low)"
+    )
     create_parser.add_argument("--labels", help="Comma-separated labels")
     create_parser.add_argument("--assignee", "-a", help="Assignee account ID")
     create_parser.add_argument("--parent", help="Parent issue key (for subtasks)")
-    create_parser.add_argument("--field", "-f", action="append", help="Custom field: 'Name=value' (repeatable)")
+    create_parser.add_argument(
+        "--field", "-f", action="append", help="Custom field: 'Name=value' (repeatable)"
+    )
 
     # edit command
     edit_parser = subparsers.add_parser("edit", help="Edit an existing issue")
     edit_parser.add_argument("key", help="Issue key (e.g., PROJ-123)")
     edit_parser.add_argument("--summary", "-s", help="New summary/title")
     edit_parser.add_argument("--description", "-d", help="New description")
-    edit_parser.add_argument("--field", "-f", action="append", help="Field to update: 'Name=value' (repeatable)")
+    edit_parser.add_argument(
+        "--field",
+        "-f",
+        action="append",
+        help="Field to update: 'Name=value' (repeatable)",
+    )
 
     # types command
-    types_parser = subparsers.add_parser("types", help="List available issue types for a project")
+    types_parser = subparsers.add_parser(
+        "types", help="List available issue types for a project"
+    )
     types_parser.add_argument("project", help="Project key (e.g., PROJ)")
 
     # statuses command
-    statuses_parser = subparsers.add_parser("statuses", help="List all available statuses for a project")
+    statuses_parser = subparsers.add_parser(
+        "statuses", help="List all available statuses for a project"
+    )
     statuses_parser.add_argument("project", help="Project key (e.g., PROJ)")
 
     # fields command
-    fields_parser = subparsers.add_parser("fields", help="List fields for a project and issue type")
+    fields_parser = subparsers.add_parser(
+        "fields", help="List fields for a project and issue type"
+    )
     fields_parser.add_argument("project", help="Project key (e.g., PROJ)")
-    fields_parser.add_argument("--type", "-t", required=True, help="Issue type (e.g., Story, Bug)")
+    fields_parser.add_argument(
+        "--type", "-t", required=True, help="Issue type (e.g., Story, Bug)"
+    )
 
     # me command
     subparsers.add_parser("me", help="Show current user info")
@@ -1234,11 +1323,16 @@ def main():
     lookup_parser.add_argument("query", help="User name or email to search")
 
     # export command
-    export_parser = subparsers.add_parser("export", help="Export issues matching JQL query")
+    export_parser = subparsers.add_parser(
+        "export", help="Export issues matching JQL query"
+    )
     export_parser.add_argument("jql", help="JQL query string")
     export_parser.add_argument(
-        "--format", "-f", choices=["yaml", "json", "markdown"], default="yaml",
-        help="Output format (default: yaml)"
+        "--format",
+        "-f",
+        choices=["yaml", "json", "markdown"],
+        default="yaml",
+        help="Output format (default: yaml)",
     )
     export_parser.add_argument(
         "--output-dir", "-o", help="Directory to save files (one per issue)"
