@@ -32,6 +32,7 @@ Commands:
     me                     - Show current user info
     lookup <QUERY>         - Lookup user by name or email
     export <JQL>           - Export issues to yaml/json/markdown files
+    rovo <QUERY>           - Search Jira issues using Rovo
 """
 
 import argparse
@@ -1186,6 +1187,33 @@ def cmd_export(args):
                 )
 
 
+@command_handler
+def cmd_rovo(args):
+    """Search Jira issues using Rovo Search (filters out Confluence results)."""
+    with mcp_client_context() as client:
+        result = client.call_tool("search", {"query": args.query})
+        data, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
+
+        results = data.get("results", []) if data else []
+        formatted = []
+        for item in results:
+            # Filter to Jira results only (ARI contains ":jira:")
+            item_id = item.get("id") or ""
+            if ":jira:" not in item_id:
+                continue
+            formatted.append({
+                "id": item_id,
+                "type": item.get("type"),
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "text": (item.get("text") or "")[:300],
+            })
+
+        yaml_output({"total": len(formatted), "results": formatted})
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Jira API operations (via MCP)",
@@ -1343,6 +1371,12 @@ def main():
         "--limit", "-l", type=int, default=50, help="Max issues to export (default: 50)"
     )
 
+    # rovo command
+    rovo_parser = subparsers.add_parser(
+        "rovo", help="Search Jira issues using Rovo (filters out Confluence)"
+    )
+    rovo_parser.add_argument("query", help="Search query")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1366,6 +1400,7 @@ def main():
         "me": cmd_me,
         "lookup": cmd_lookup,
         "export": cmd_export,
+        "rovo": cmd_rovo,
     }
 
     commands[args.command](args)

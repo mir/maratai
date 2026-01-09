@@ -22,6 +22,7 @@ Commands:
     spaces                - List Confluence spaces
     tree <PAGE_ID> [...]  - Download page tree(s) with nested folders
     export <CQL>          - Export pages to yaml/json/markdown files
+    rovo <QUERY>          - Search Confluence pages using Rovo
 """
 
 import argparse
@@ -764,6 +765,33 @@ def cmd_export(args):
                 print(yaml.dump({"pages": exported_pages}, default_flow_style=False, allow_unicode=True, sort_keys=False))
 
 
+@command_handler
+def cmd_rovo(args):
+    """Search Confluence pages using Rovo Search (filters out Jira results)."""
+    with mcp_client_context() as client:
+        result = client.call_tool("search", {"query": args.query})
+        data, error_msg = parse_mcp_result(result)
+        if error_msg:
+            error_output(error_msg)
+
+        results = data.get("results", []) if data else []
+        formatted = []
+        for item in results:
+            # Filter to Confluence results only (ARI contains ":confluence:")
+            item_id = item.get("id") or ""
+            if ":confluence:" not in item_id:
+                continue
+            formatted.append({
+                "id": item_id,
+                "type": item.get("type"),
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "text": (item.get("text") or "")[:300],
+            })
+
+        yaml_output({"total": len(formatted), "results": formatted})
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Confluence API operations (via MCP)",
@@ -833,6 +861,12 @@ def main():
         "--limit", "-l", type=int, default=50, help="Max pages to export (default: 50)"
     )
 
+    # rovo command
+    rovo_parser = subparsers.add_parser(
+        "rovo", help="Search Confluence pages using Rovo (filters out Jira)"
+    )
+    rovo_parser.add_argument("query", help="Search query")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -846,6 +880,7 @@ def main():
         "spaces": cmd_spaces,
         "tree": cmd_tree,
         "export": cmd_export,
+        "rovo": cmd_rovo,
     }
 
     commands[args.command](args)

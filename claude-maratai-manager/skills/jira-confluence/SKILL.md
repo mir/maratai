@@ -13,6 +13,29 @@ Access Jira and Confluence content via Python scripts. All output is YAML format
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/auth.py login
 ```
 
+# Rovo Search
+
+Search Atlassian content using Rovo. Each script filters to its respective product:
+
+```bash
+# Search Jira issues only
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/jira.py rovo "search query"
+
+# Search Confluence pages only
+uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/confluence.py rovo "search query"
+```
+
+Results are filtered by ARI (Atlassian Resource Identifier):
+- `jira.py rovo` returns only results with `ari:cloud:jira:...`
+- `confluence.py rovo` returns only results with `ari:cloud:confluence:...`
+
+Output fields:
+- `id` - Atlassian Resource Identifier (ARI)
+- `type` - Content type
+- `title` - Issue summary or page title
+- `url` - Direct link
+- `text` - Content preview (300 chars)
+
 # Jira Commands
 
 ```bash
