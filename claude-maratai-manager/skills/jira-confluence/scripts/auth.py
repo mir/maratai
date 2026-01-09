@@ -3,7 +3,9 @@
 # dependencies = [
 #   "httpx>=0.27",
 #   "keyring>=25.0",
-#   "pyyaml>=6.0"
+#   "pyyaml>=6.0",
+#   "pyobjc-framework-Security>=10.0; sys_platform == 'darwin'",
+#   "pyobjc-framework-LocalAuthentication>=10.0; sys_platform == 'darwin'",
 # ]
 # requires-python = ">=3.12"
 # ///
@@ -15,6 +17,10 @@ Commands:
     setup-token - Setup using API token (env vars or arguments)
     status      - Check authentication status
     logout      - Clear stored tokens
+
+Token storage:
+    On macOS: Uses Touch ID / Face ID protected Keychain (biometric)
+    On other systems: Uses file-based storage with fallback
 """
 
 import argparse
@@ -35,6 +41,7 @@ from oauth import (
     save_tokens,
     clear_tokens,
     clear_all as clear_oauth_storage,
+    get_storage_type,
 )
 
 SERVICE_NAME = "atlassian-claude-skill"
@@ -169,6 +176,7 @@ def cmd_login(args):
     yaml.dump(
         {
             "status": "success",
+            "storage": get_storage_type(),
             "site": {"name": selected["name"], "url": selected["url"]},
             "message": "Authentication complete! You can now use Jira and Confluence scripts.",
         },
@@ -269,6 +277,7 @@ def cmd_status(args):
     auth_type = get_stored_value("auth_type") or "oauth"
     site_name = get_stored_value("site_name")
     site_url = get_stored_value("site_url")
+    storage_type = get_storage_type()
 
     if auth_type == "basic":
         # Basic Auth (API token)
@@ -279,6 +288,7 @@ def cmd_status(args):
             yaml.dump(
                 {
                     "authenticated": False,
+                    "storage": storage_type,
                     "message": "Not authenticated. Run 'auth.py login' or 'auth.py setup-token'",
                 },
                 sys.stdout,
@@ -290,6 +300,7 @@ def cmd_status(args):
             {
                 "authenticated": True,
                 "auth_type": "basic (API token)",
+                "storage": storage_type,
                 "site": {"name": site_name, "url": site_url},
                 "user": api_email,
                 "token_status": "valid (API tokens don't expire)",
@@ -305,6 +316,7 @@ def cmd_status(args):
             yaml.dump(
                 {
                     "authenticated": False,
+                    "storage": storage_type,
                     "message": "Not authenticated. Run 'auth.py login' or 'auth.py setup-token'",
                 },
                 sys.stdout,
@@ -326,7 +338,8 @@ def cmd_status(args):
         yaml.dump(
             {
                 "authenticated": True,
-                "auth_type": "oauth (pure Python)",
+                "auth_type": "oauth",
+                "storage": storage_type,
                 "site": {"name": site_name, "url": site_url},
                 "token_status": status,
                 "expires_in_minutes": max(0, expires_in_seconds // 60),
