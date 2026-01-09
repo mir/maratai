@@ -5,25 +5,20 @@
 # ///
 
 """
-Transfer markdown files from Claude Code plugin folders to OpenCode and Cursor formats,
-transforming frontmatter to each platform's syntax.
+Transfer markdown files from Claude Code plugin folders to OpenCode format,
+transforming frontmatter to OpenCode's syntax.
 
 Source directories:
 - claude-maratai-dev/agents/ -> ${OPENCODE_DIR}/agent/
 - claude-maratai-dev/commands/ -> ${OPENCODE_DIR}/command/
 - claude-maratai-manager/commands/ -> ${OPENCODE_DIR}/command/
-- claude-maratai-manager/skills/ -> ${OPENCODE_DIR}/skill/ AND .cursor/rules/
+- claude-maratai-manager/skills/ -> ${OPENCODE_DIR}/skill/
 
 OpenCode Transformations:
 - Agents: Remove name/model/tools fields, add mode: subagent
 - Commands: Keep description field
 - Skills: Keep SKILL.md as-is, copy scripts/ and references/ folders
 - Replace ${CLAUDE_PLUGIN_ROOT}/skills/<skill>/ with ${OPENCODE_DIR}/skill/<skill>/
-
-Cursor Transformations:
-- Skills: Remove name, keep description, add alwaysApply: false
-- Replace ${CLAUDE_PLUGIN_ROOT}/skills/<skill>/ with .cursor/rules/<skill>/
-- Copy scripts/ directory alongside RULE.md
 """
 
 import shutil
@@ -388,13 +383,6 @@ def transform_opencode_skill_body(body: str, skill_name: str) -> str:
     return body.replace(old_path, new_path)
 
 
-def transform_cursor_body(body: str, skill_name: str) -> str:
-    """Replace ${CLAUDE_PLUGIN_ROOT}/skills/<skill> with .cursor/rules/<skill>"""
-    old_path = f"${{CLAUDE_PLUGIN_ROOT}}/skills/{skill_name}"
-    new_path = f".cursor/rules/{skill_name}"
-    return body.replace(old_path, new_path)
-
-
 def transfer_skill(
     skill_path: Path,
     skill_name: str,
@@ -477,19 +465,6 @@ def transfer_skill(
 # =============================================================================
 # Frontmatter Generators
 # =============================================================================
-
-
-def generate_cursor_frontmatter(metadata: dict, skill_name: str) -> str:
-    """Generate Cursor-compliant YAML frontmatter for RULE.md."""
-    cursor_meta = {}
-
-    if 'description' in metadata:
-        cursor_meta['description'] = metadata['description']
-
-    cursor_meta['alwaysApply'] = False
-
-    yaml_str = yaml.dump(cursor_meta, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    return f"---\n{yaml_str}---\n"
 
 
 def generate_opencode_skill_frontmatter(metadata: dict, skill_name: str) -> str:
@@ -671,79 +646,17 @@ def transfer_opencode(project_root: Path) -> tuple[int, int, int]:
     return transferred, skipped, removed
 
 
-def transfer_cursor(project_root: Path) -> tuple[int, int, int]:
-    """
-    Transfer Claude Code skills to Cursor rules format.
-
-    Returns (transferred, skipped, removed) counts.
-    """
-    target_root = project_root / ".cursor" / "rules"
-
-    print("=" * 60)
-    print("Transfer Claude Code -> Cursor Rules")
-    print("=" * 60)
-    print(f"Target: {target_root}")
-    print()
-
-    # Get all skill directories
-    skills = get_skill_sources(project_root)
-    if not skills:
-        print("No skills found!")
-        return 0, 0, 0
-
-    print(f"Found {len(skills)} skill(s)")
-    print()
-
-    # Track all valid target files for orphan cleanup
-    all_valid_targets: set[Path] = set()
-
-    # Process each skill
-    total_transferred = 0
-    total_skipped = 0
-
-    for skill_path, skill_name in skills:
-        print(f"--- {skill_name} ---")
-
-        transferred, skipped, valid_targets = transfer_skill(
-            skill_path, skill_name, target_root, project_root,
-            target_subdir=None,
-            target_filename="RULE.md",
-            frontmatter_fn=generate_cursor_frontmatter,
-            body_transform_fn=transform_cursor_body,
-            subdirs=['scripts']
-        )
-
-        total_transferred += transferred
-        total_skipped += skipped
-        all_valid_targets.update(valid_targets)
-
-        print()
-
-    # Cleanup orphans
-    print("--- Cleanup ---")
-    removed = cleanup_orphan_files(target_root, all_valid_targets, target_root)
-    if removed == 0:
-        print("  No orphans found")
-    print()
-
-    return total_transferred, total_skipped, removed
-
-
 def main():
     project_root = Path(__file__).parent
 
     # Transfer to OpenCode
-    oc_transferred, oc_skipped, oc_removed = transfer_opencode(project_root)
-
-    # Transfer to Cursor
-    cursor_transferred, cursor_skipped, cursor_removed = transfer_cursor(project_root)
+    transferred, skipped, removed = transfer_opencode(project_root)
 
     # Final summary
     print("=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    print(f"OpenCode: {oc_transferred} transferred, {oc_skipped} unchanged, {oc_removed} removed")
-    print(f"Cursor:   {cursor_transferred} transferred, {cursor_skipped} unchanged, {cursor_removed} removed")
+    print(f"OpenCode: {transferred} transferred, {skipped} unchanged, {removed} removed")
     print("=" * 60)
 
 

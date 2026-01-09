@@ -1,6 +1,5 @@
 # /// script
 # dependencies = [
-#   "httpx>=0.27",
 #   "keyring>=25.0",
 #   "pyyaml>=6.0"
 # ]
@@ -18,9 +17,8 @@ import json
 import sys
 import time
 from contextlib import contextmanager
-from typing import Any, Callable
+from typing import Any, Callable, TextIO, Generator, NoReturn
 
-import httpx
 import keyring
 import yaml
 
@@ -33,31 +31,37 @@ from oauth import (
     OAuthError,
 )
 
-SERVICE_NAME = "atlassian-claude-skill"
+# Import configuration
+from config import SERVICE_NAME
 
 
 class AtlassianError(Exception):
     """Base exception for Atlassian API errors."""
+
     pass
 
 
 class AuthenticationError(AtlassianError):
     """Token expired, invalid, or missing."""
+
     pass
 
 
 class NotFoundError(AtlassianError):
     """Resource not found."""
+
     pass
 
 
 class RateLimitError(AtlassianError):
     """API rate limit exceeded."""
+
     pass
 
 
 class ConfigurationError(AtlassianError):
     """Missing configuration."""
+
     pass
 
 
@@ -159,109 +163,23 @@ def get_cloud_id() -> str:
     return cloud_id
 
 
-class AtlassianClient:
-    """HTTP client for Atlassian APIs with automatic token refresh."""
-
-    def __init__(self):
-        self.auth_type = get_auth_type()
-
-        if self.auth_type == "basic":
-            # Basic Auth uses direct site URLs
-            site_url = get_stored_value("site_url")
-            if not site_url:
-                raise ConfigurationError(
-                    "Site URL not configured. Run: uv run scripts/auth.py setup-token"
-                )
-            self.jira_base = f"{site_url}/rest/api/3"
-            self.confluence_base = f"{site_url}/wiki"
-            self.cloud_id = None
-        else:
-            # OAuth uses cloud API URLs
-            self.cloud_id = get_cloud_id()
-            self.jira_base = (
-                f"https://api.atlassian.com/ex/jira/{self.cloud_id}/rest/api/3"
-            )
-            self.confluence_base = (
-                f"https://api.atlassian.com/ex/confluence/{self.cloud_id}"
-            )
-
-    def _get_headers(self) -> dict:
-        """Get authorization headers."""
-        if self.auth_type == "basic":
-            auth_header = get_basic_auth_header()
-        else:
-            token = get_valid_token()
-            auth_header = f"Bearer {token}"
-
-        return {
-            "Authorization": auth_header,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-
-    def _handle_response(self, response: httpx.Response) -> dict | list:
-        """Handle API response, raising appropriate errors."""
-        if response.status_code == 401:
-            raise AuthenticationError(
-                "Authentication failed. Run: uv run scripts/auth.py login"
-            )
-        if response.status_code == 404:
-            raise NotFoundError("Resource not found")
-        if response.status_code == 429:
-            raise RateLimitError("Rate limited. Please wait and retry.")
-
-        response.raise_for_status()
-        return response.json()
-
-    def get(self, url: str, params: dict | None = None) -> dict | list:
-        """Make GET request to Atlassian API."""
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(url, headers=self._get_headers(), params=params)
-            return self._handle_response(response)
-
-    def post(self, url: str, json_data: dict | None = None) -> dict | list:
-        """Make POST request to Atlassian API."""
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(url, headers=self._get_headers(), json=json_data)
-            return self._handle_response(response)
-
-    def put(self, url: str, json_data: dict | None = None) -> dict | list:
-        """Make PUT request to Atlassian API."""
-        with httpx.Client(timeout=30.0) as client:
-            response = client.put(url, headers=self._get_headers(), json=json_data)
-            return self._handle_response(response)
-
-    # Jira convenience methods
-    def jira_get(self, endpoint: str, params: dict | None = None) -> dict | list:
-        """GET request to Jira API."""
-        return self.get(f"{self.jira_base}{endpoint}", params)
-
-    def jira_post(self, endpoint: str, json_data: dict | None = None) -> dict | list:
-        """POST request to Jira API."""
-        return self.post(f"{self.jira_base}{endpoint}", json_data)
-
-    def jira_put(self, endpoint: str, json_data: dict | None = None) -> dict | list:
-        """PUT request to Jira API."""
-        return self.put(f"{self.jira_base}{endpoint}", json_data)
-
-    # Confluence convenience methods
-    def confluence_get(self, endpoint: str, params: dict | None = None) -> dict | list:
-        """GET request to Confluence API."""
-        return self.get(f"{self.confluence_base}{endpoint}", params)
-
-
-def yaml_output(data: Any, stream=sys.stdout) -> None:
+def yaml_output(data: Any, stream: TextIO = sys.stdout) -> None:
     """
     Output data as YAML to stdout.
     Uses pure block style for all structures (no inline JSON-like formatting).
     """
+
     # Custom representer to force block style for dicts
     def represent_dict(dumper, data):
-        return dumper.represent_mapping('tag:yaml.org,2002:map', data.items(), flow_style=False)
+        return dumper.represent_mapping(
+            "tag:yaml.org,2002:map", data.items(), flow_style=False
+        )
 
     # Custom representer to force block style for lists
     def represent_list(dumper, data):
-        return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=False)
+        return dumper.represent_sequence(
+            "tag:yaml.org,2002:seq", data, flow_style=False
+        )
 
     # Create custom dumper class
     class BlockStyleDumper(yaml.SafeDumper):
@@ -281,8 +199,8 @@ def yaml_output(data: Any, stream=sys.stdout) -> None:
     )
 
 
-def error_output(message: str) -> None:
-    """Output error message as YAML to stderr."""
+def error_output(message: str) -> NoReturn:
+    """Output error message as YAML to stderr and exit."""
     yaml.dump({"error": message}, sys.stderr, default_flow_style=False)
     sys.exit(1)
 
@@ -290,6 +208,7 @@ def error_output(message: str) -> None:
 # ---------------------------------------------------------------------------
 # MCP Utilities - shared functions for MCP client operations
 # ---------------------------------------------------------------------------
+
 
 def parse_mcp_result(result: Any) -> tuple[dict | list | None, str | None]:
     """
@@ -332,13 +251,16 @@ def parse_mcp_result(result: Any) -> tuple[dict | list | None, str | None]:
 
 
 @contextmanager
-def mcp_client_context():
+def mcp_client_context() -> Generator[Any, None, None]:
     """
     Context manager for MCP client lifecycle.
 
     Usage:
         with mcp_client_context() as client:
             result = client.call_tool(...)
+
+    Yields:
+        AtlassianMCPClient instance
     """
     # Import here to avoid circular imports
     from mcp_client import AtlassianMCPClient
@@ -366,7 +288,12 @@ def command_handler(func: Callable) -> Callable:
             return func(*args, **kwargs)
         except (AuthenticationError, MCPAuthError) as e:
             yaml.dump(
-                {"error": {"message": str(e), "hint": "Run: uv run scripts/auth.py login"}},
+                {
+                    "error": {
+                        "message": str(e),
+                        "hint": "Run: uv run scripts/auth.py login",
+                    }
+                },
                 sys.stderr,
                 default_flow_style=False,
             )
@@ -380,7 +307,12 @@ def command_handler(func: Callable) -> Callable:
             sys.exit(1)
         except ConfigurationError as e:
             yaml.dump(
-                {"error": {"message": str(e), "hint": "Run: uv run scripts/auth.py login"}},
+                {
+                    "error": {
+                        "message": str(e),
+                        "hint": "Run: uv run scripts/auth.py login",
+                    }
+                },
                 sys.stderr,
                 default_flow_style=False,
             )
@@ -397,11 +329,7 @@ def command_handler(func: Callable) -> Callable:
 
 
 def call_mcp_with_retry(
-    client,
-    tool_name: str,
-    params: dict,
-    rate_limiter: Any = None,
-    max_retries: int = 3
+    client, tool_name: str, params: dict, rate_limiter: Any = None, max_retries: int = 3
 ) -> tuple[dict | list | None, str | None]:
     """
     Call MCP tool with exponential backoff retry on failure.
@@ -431,7 +359,11 @@ def call_mcp_with_retry(
             if rate_limiter:
                 rate_limiter.on_failure()
             if attempt < max_retries - 1:
-                wait_time = (rate_limiter.state.delay if rate_limiter else 1.0) * (attempt + 1)
-                print(f"Request failed, retrying in {wait_time:.1f}s...", file=sys.stderr)
+                wait_time = (rate_limiter.state.delay if rate_limiter else 1.0) * (
+                    attempt + 1
+                )
+                print(
+                    f"Request failed, retrying in {wait_time:.1f}s...", file=sys.stderr
+                )
                 time.sleep(wait_time)
     return None, str(last_error)

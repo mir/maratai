@@ -32,19 +32,24 @@ import httpx
 import yaml
 
 # Import token functions from oauth module
-from oauth import load_tokens, get_valid_token, AuthenticationError
+from oauth import get_valid_token, AuthenticationError
 
-ATLASSIAN_MCP_URL = "https://mcp.atlassian.com/v1/sse"
-MCP_PROTOCOL_VERSION = "2025-06-18"
+# Import shared utilities
+from common import yaml_output
+
+# Import configuration
+from config import MCP_URL, MCP_PROTOCOL_VERSION
 
 
 class MCPError(Exception):
     """Base exception for MCP errors."""
+
     pass
 
 
 class ProtocolError(MCPError):
     """MCP protocol error."""
+
     pass
 
 
@@ -101,6 +106,7 @@ class AtlassianMCPClient:
 
     def _start_sse_listener(self):
         """Start background thread to listen for SSE events."""
+
         def listen():
             try:
                 with httpx.Client(timeout=None) as client:
@@ -108,7 +114,7 @@ class AtlassianMCPClient:
                     headers["Accept"] = "text/event-stream"
 
                     # Use the session URL if we have one
-                    url = self._session_url or ATLASSIAN_MCP_URL
+                    url = self._session_url or MCP_URL
 
                     with client.stream(
                         "GET",
@@ -131,9 +137,13 @@ class AtlassianMCPClient:
                                     if current_event == "endpoint":
                                         # data is like: /v1/sse?sessionId=XXX
                                         if "sessionId=" in data:
-                                            session_id = data.split("sessionId=")[1].split("&")[0]
+                                            session_id = data.split("sessionId=")[
+                                                1
+                                            ].split("&")[0]
                                             self.session_id = session_id
-                                            self._session_url = f"https://mcp.atlassian.com{data}"
+                                            self._session_url = (
+                                                f"https://mcp.atlassian.com{data}"
+                                            )
                                     else:
                                         # Try to parse as JSON-RPC response
                                         try:
@@ -172,8 +182,13 @@ class AtlassianMCPClient:
 
         return self.session_id
 
-    def _send_request_impl(self, method: str, params: dict | None = None,
-                           request_id: int | None = None, timeout: float = 30.0) -> dict:
+    def _send_request_impl(
+        self,
+        method: str,
+        params: dict | None = None,
+        request_id: int | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
         """
         Send JSON-RPC request to MCP server (implementation).
 
@@ -205,7 +220,7 @@ class AtlassianMCPClient:
             payload["params"] = params
 
         # Use session URL for POST requests
-        url = self._session_url or ATLASSIAN_MCP_URL
+        url = self._session_url or MCP_URL
 
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
@@ -224,7 +239,7 @@ class AtlassianMCPClient:
                 self.session_id = None
                 self._session_url = None
                 self.connect()
-                url = self._session_url or ATLASSIAN_MCP_URL
+                url = self._session_url or MCP_URL
                 response = client.post(
                     url,
                     json=payload,
@@ -232,9 +247,7 @@ class AtlassianMCPClient:
                 )
 
             if response.status_code not in (200, 202):
-                raise ProtocolError(
-                    f"HTTP {response.status_code}: {response.text}"
-                )
+                raise ProtocolError(f"HTTP {response.status_code}: {response.text}")
 
             content_type = response.headers.get("Content-Type", "")
 
@@ -246,9 +259,7 @@ class AtlassianMCPClient:
             if "application/json" in content_type:
                 result = response.json()
                 if "error" in result:
-                    raise ProtocolError(
-                        f"JSON-RPC error: {result['error']}"
-                    )
+                    raise ProtocolError(f"JSON-RPC error: {result['error']}")
                 return result.get("result", {})
 
             # 202 Accepted - wait for response via SSE
@@ -390,7 +401,7 @@ class AtlassianMCPClient:
         if params:
             payload["params"] = params
 
-        url = self._session_url or ATLASSIAN_MCP_URL
+        url = self._session_url or MCP_URL
 
         with httpx.Client(timeout=30.0) as client:
             client.post(
@@ -412,7 +423,9 @@ class AtlassianMCPClient:
         result = self._send_request("tools/list")
         return result.get("tools", [])
 
-    def call_tool(self, name: str, arguments: dict | None = None, return_full_result: bool = False) -> Any:
+    def call_tool(
+        self, name: str, arguments: dict | None = None, return_full_result: bool = False
+    ) -> Any:
         """
         Call a tool on the MCP server.
 
@@ -445,18 +458,6 @@ class AtlassianMCPClient:
         if content and len(content) == 1 and content[0].get("type") == "text":
             return content[0].get("text", "")
         return content
-
-
-def yaml_output(data: Any) -> None:
-    """Output data as YAML."""
-    yaml.dump(
-        data,
-        sys.stdout,
-        default_flow_style=False,
-        allow_unicode=True,
-        sort_keys=False,
-        width=120,
-    )
 
 
 def cmd_list_tools(args):
