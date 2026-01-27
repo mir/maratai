@@ -20,16 +20,16 @@ gcloud auth application-default login --scopes=https://www.googleapis.com/auth/d
 
 ```bash
 # Export to stdout
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/docs.py export <DOC_ID_OR_URL> --stdout
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py docs export <DOC_ID_OR_URL> --stdout
 
 # Export to files (default ./exports when --stdout is not set)
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/docs.py export <DOC_ID_OR_URL>
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py docs export <DOC_ID_OR_URL>
 
 # Write to a specific directory
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/docs.py export <DOC_ID_OR_URL> --output-dir ./exports
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py docs export <DOC_ID_OR_URL> --output-dir ./exports
 
 # Write and print
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/docs.py export <DOC_ID_OR_URL> --output-dir ./exports --stdout
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py docs export <DOC_ID_OR_URL> --output-dir ./exports --stdout
 ```
 
 Notes:
@@ -40,17 +40,17 @@ Notes:
 
 ```bash
 # Export all tabs to stdout
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/sheets.py export <SHEET_ID_OR_URL> --stdout
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py sheets export <SHEET_ID_OR_URL> --stdout
 
 # Export all tabs to files (default ./exports when --stdout is not set)
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/sheets.py export <SHEET_ID_OR_URL>
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py sheets export <SHEET_ID_OR_URL>
 
 # Export specific tabs
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/sheets.py export <SHEET_ID_OR_URL> --tab "Summary" --tab "Data"
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py sheets export <SHEET_ID_OR_URL> --tab "Summary" --tab "Data"
 
 # Header control
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/sheets.py export <SHEET_ID_OR_URL> --header-row 2
-uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/sheets.py export <SHEET_ID_OR_URL> --no-header
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py sheets export <SHEET_ID_OR_URL> --header-row 2
+uv run --directory ${OPENCODE_DIR}/skill/google-docs-sheets scripts/cli.py sheets export <SHEET_ID_OR_URL> --no-header
 ```
 
 Notes:

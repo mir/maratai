@@ -47,22 +47,92 @@ from oauth import (
 SERVICE_NAME = "atlassian-claude-skill"
 
 
+def _get_generic_keychain():
+    """Get GenericKeychain instance if available on macOS.
+
+    Returns:
+        GenericKeychain instance or None if not available
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        from biometric_keychain import get_keychain
+
+        return get_keychain()
+    except ImportError:
+        return None
+
+
 def get_stored_value(key: str) -> str | None:
-    """Retrieve a value from Keychain."""
+    """Get value from keychain (macOS) or keyring (other platforms).
+
+    On macOS, uses GenericKeychain which stores without application-specific
+    ACLs, avoiding repeated password prompts when running from different directories.
+    """
+    kc = _get_generic_keychain()
+    if kc:
+        return kc.get_generic(key)
     return keyring.get_password(SERVICE_NAME, key)
 
 
 def set_stored_value(key: str, value: str) -> None:
-    """Store a value in Keychain."""
+    """Store value in keychain (macOS) or keyring (other platforms).
+
+    On macOS, uses GenericKeychain which stores without application-specific
+    ACLs, avoiding repeated password prompts when running from different directories.
+    """
+    kc = _get_generic_keychain()
+    if kc and kc.set_generic(key, value):
+        return
     keyring.set_password(SERVICE_NAME, key, value)
 
 
 def delete_stored_value(key: str) -> None:
-    """Delete a value from Keychain."""
+    """Delete value from keychain (macOS) or keyring (other platforms)."""
+    kc = _get_generic_keychain()
+    if kc:
+        kc.delete_generic(key)
+        return
     try:
         keyring.delete_password(SERVICE_NAME, key)
     except keyring.errors.PasswordDeleteError:
         pass
+
+
+def _migrate_from_keyring() -> None:
+    """Migrate credentials from keyring to generic keychain storage.
+
+    On macOS, this migrates credentials stored with application-specific ACLs
+    (which cause repeated password prompts) to the new generic keychain storage
+    (which is accessible by any process running as the current user).
+    """
+    kc = _get_generic_keychain()
+    if not kc:
+        return
+
+    keys_to_migrate = [
+        "auth_type",
+        "api_email",
+        "api_token",
+        "site_url",
+        "site_name",
+        "cloud_id",
+    ]
+    for key in keys_to_migrate:
+        # Check if already in new storage
+        if kc.get_generic(key):
+            continue
+        # Try to get from old keyring
+        try:
+            old_value = keyring.get_password(SERVICE_NAME, key)
+        except Exception:
+            continue
+        if old_value:
+            kc.set_generic(key, old_value)
+            try:
+                keyring.delete_password(SERVICE_NAME, key)
+            except Exception:
+                pass
 
 
 def cmd_login(args):
@@ -173,6 +243,9 @@ def cmd_login(args):
     set_stored_value("site_name", selected["name"])
     set_stored_value("site_url", selected["url"])
 
+    # Migrate any existing credentials from old keyring storage to new generic keychain
+    _migrate_from_keyring()
+
     yaml.dump(
         {
             "status": "success",
@@ -258,6 +331,9 @@ def cmd_setup_token(args):
     set_stored_value(
         "site_name", site_url.replace("https://", "").replace(".atlassian.net", "")
     )
+
+    # Migrate any existing credentials from old keyring storage to new generic keychain
+    _migrate_from_keyring()
 
     yaml.dump(
         {

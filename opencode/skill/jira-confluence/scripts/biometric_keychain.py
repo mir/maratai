@@ -442,3 +442,166 @@ def clear_all_biometric() -> None:
     keychain = _get_keychain()
     keychain.delete(_TOKENS_KEY)
     keychain.delete(_CLIENT_KEY)
+
+
+# --- Generic keychain storage (no biometric, no ACL restrictions) ---
+# These methods store items accessible by any process running as the current user,
+# avoiding repeated keychain password prompts when running from different directories.
+
+
+class GenericKeychain:
+    """
+    macOS Keychain storage without biometric or application-specific ACLs.
+
+    Items stored with this class are accessible by any process running as the
+    current user, without triggering repeated password prompts. This is useful
+    for credentials that need to be accessed from different working directories
+    or by different Python process invocations.
+
+    Uses kSecAttrAccessibleWhenUnlockedThisDeviceOnly for security (items are
+    encrypted and only accessible when the device is unlocked) but without
+    application-specific access controls.
+    """
+
+    ERR_SEC_SUCCESS = 0
+    ERR_SEC_ITEM_NOT_FOUND = -25300
+    ERR_SEC_DUPLICATE_ITEM = -25299
+
+    def __init__(self, service: str):
+        """
+        Initialize generic keychain.
+
+        Args:
+            service: Keychain service name (groups related secrets)
+        """
+        self.service_name = service
+        self._available = False
+        self._security = None
+        self._foundation = None
+
+        if not IS_MACOS:
+            return
+
+        try:
+            import Security
+            import Foundation
+
+            self._security = Security
+            self._foundation = Foundation
+            self._available = True
+        except ImportError:
+            pass
+
+    @property
+    def available(self) -> bool:
+        """Check if generic keychain is available."""
+        return self._available
+
+    def set_generic(self, key: str, value: str) -> bool:
+        """Store value in keychain without biometric protection.
+
+        Uses kSecAttrAccessibleWhenUnlockedThisDeviceOnly without application-specific
+        access controls, allowing any process running as the current user to access.
+
+        Args:
+            key: The key name
+            value: The value to store
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._available:
+            return False
+
+        Security = self._security
+        Foundation = self._foundation
+
+        value_data = value.encode("utf-8")
+        ns_data = Foundation.NSData.dataWithBytes_length_(value_data, len(value_data))
+
+        # Delete existing item first
+        delete_query = {
+            Security.kSecClass: Security.kSecClassGenericPassword,
+            Security.kSecAttrService: self.service_name,
+            Security.kSecAttrAccount: key,
+        }
+        Security.SecItemDelete(delete_query)
+
+        # Add new item WITHOUT access control (no ACL = any app as user can access)
+        add_query = {
+            Security.kSecClass: Security.kSecClassGenericPassword,
+            Security.kSecAttrService: self.service_name,
+            Security.kSecAttrAccount: key,
+            Security.kSecValueData: ns_data,
+            Security.kSecAttrAccessible: Security.kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        }
+
+        status, _ = Security.SecItemAdd(add_query, None)
+        return status == self.ERR_SEC_SUCCESS
+
+    def get_generic(self, key: str) -> str | None:
+        """Retrieve value from keychain without triggering ACL prompts.
+
+        Args:
+            key: The key name
+
+        Returns:
+            The value, or None if not found
+        """
+        if not self._available:
+            return None
+
+        Security = self._security
+
+        query = {
+            Security.kSecClass: Security.kSecClassGenericPassword,
+            Security.kSecAttrService: self.service_name,
+            Security.kSecAttrAccount: key,
+            Security.kSecReturnData: True,
+            Security.kSecMatchLimit: Security.kSecMatchLimitOne,
+        }
+
+        status, result = Security.SecItemCopyMatching(query, None)
+        if status == self.ERR_SEC_SUCCESS and result:
+            return bytes(result).decode("utf-8")
+        return None
+
+    def delete_generic(self, key: str) -> bool:
+        """Delete a generic keychain item.
+
+        Args:
+            key: The key name
+
+        Returns:
+            True if deleted or not found, False on error
+        """
+        if not self._available:
+            return False
+
+        Security = self._security
+
+        query = {
+            Security.kSecClass: Security.kSecClassGenericPassword,
+            Security.kSecAttrService: self.service_name,
+            Security.kSecAttrAccount: key,
+        }
+        status = Security.SecItemDelete(query)
+        return status in (self.ERR_SEC_SUCCESS, self.ERR_SEC_ITEM_NOT_FOUND)
+
+
+# Singleton generic keychain instance
+_generic_keychain_instance: GenericKeychain | None = None
+
+
+def get_keychain() -> GenericKeychain | None:
+    """Get or create the singleton generic keychain instance.
+
+    Returns:
+        GenericKeychain instance if available on macOS, None otherwise
+    """
+    global _generic_keychain_instance
+    if _generic_keychain_instance is None:
+        _generic_keychain_instance = GenericKeychain(_SERVICE_NAME)
+    if _generic_keychain_instance.available:
+        return _generic_keychain_instance
+    return None
