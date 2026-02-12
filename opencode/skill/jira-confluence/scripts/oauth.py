@@ -3,8 +3,6 @@
 # dependencies = [
 #   "httpx>=0.27",
 #   "pyyaml>=6.0",
-#   "pyobjc-framework-Security>=10.0; sys_platform == 'darwin'",
-#   "pyobjc-framework-LocalAuthentication>=10.0; sys_platform == 'darwin'",
 # ]
 # requires-python = ">=3.12"
 # ///
@@ -15,7 +13,7 @@ Implements:
 - OAuth 2.0 Authorization Code flow with PKCE (RFC7636)
 - Dynamic Client Registration (RFC7591)
 - Token refresh
-- Biometric-protected token storage (macOS Touch ID / Face ID)
+- File-based token storage
 
 No Node.js or mcp-remote dependency required.
 """
@@ -199,16 +197,6 @@ def wait_for_callback(port: int, timeout: int = 120) -> tuple[str, str]:
 
 
 # --- Storage Functions ---
-# Supports biometric-protected storage on macOS with fallback to file-based storage
-
-
-def _use_biometric_storage() -> bool:
-    """Check if biometric storage should be used."""
-    try:
-        from biometric_keychain import is_biometric_available
-        return is_biometric_available()
-    except ImportError:
-        return False
 
 
 def ensure_config_dir():
@@ -217,26 +205,7 @@ def ensure_config_dir():
 
 
 def load_client_info() -> dict | None:
-    """
-    Load client info.
-
-    Tries biometric keychain first (macOS), falls back to file storage.
-    """
-    # Try biometric storage first
-    if _use_biometric_storage():
-        try:
-            from biometric_keychain import load_client_info_biometric, BiometricAuthCanceled
-            result = load_client_info_biometric()
-            if result:
-                return result
-            # If not in biometric storage, check file (migration case)
-        except BiometricAuthCanceled:
-            print("Biometric authentication canceled.")
-            return None
-        except Exception:
-            pass  # Fall through to file storage
-
-    # File-based fallback
+    """Load client info from file storage."""
     if not os.path.exists(CLIENT_INFO_FILE):
         return None
     try:
@@ -247,51 +216,14 @@ def load_client_info() -> dict | None:
 
 
 def save_client_info(client_info: dict):
-    """
-    Save client info.
-
-    Uses biometric keychain on macOS, falls back to file storage.
-    """
-    # Try biometric storage first
-    if _use_biometric_storage():
-        try:
-            from biometric_keychain import save_client_info_biometric
-            save_client_info_biometric(client_info)
-            # Also remove old file if it exists (migration)
-            if os.path.exists(CLIENT_INFO_FILE):
-                os.remove(CLIENT_INFO_FILE)
-            return
-        except Exception as e:
-            print(f"Biometric storage failed, using file: {e}")
-
-    # File-based fallback
+    """Save client info to file storage."""
     ensure_config_dir()
     with open(CLIENT_INFO_FILE, "w") as f:
         json.dump(client_info, f, indent=2)
 
 
 def load_tokens() -> dict | None:
-    """
-    Load OAuth tokens.
-
-    Tries biometric keychain first (macOS with Touch ID protection),
-    falls back to file storage for other environments.
-    """
-    # Try biometric storage first
-    if _use_biometric_storage():
-        try:
-            from biometric_keychain import load_tokens_biometric, BiometricAuthCanceled
-            result = load_tokens_biometric()
-            if result:
-                return result
-            # If not in biometric storage, check file (migration case)
-        except BiometricAuthCanceled:
-            print("Biometric authentication canceled.")
-            return None
-        except Exception:
-            pass  # Fall through to file storage
-
-    # File-based fallback
+    """Load OAuth tokens from file storage."""
     if not os.path.exists(TOKENS_FILE):
         return None
     try:
@@ -302,60 +234,24 @@ def load_tokens() -> dict | None:
 
 
 def save_tokens(tokens: dict):
-    """
-    Save OAuth tokens.
-
-    Uses biometric keychain on macOS (Touch ID protected),
-    falls back to file storage for other environments.
-    """
+    """Save OAuth tokens to file storage."""
     # Add expires_at if not present
     if "expires_at" not in tokens and "expires_in" in tokens:
         tokens["expires_at"] = time.time() + tokens["expires_in"]
 
-    # Try biometric storage first
-    if _use_biometric_storage():
-        try:
-            from biometric_keychain import save_tokens_biometric
-            save_tokens_biometric(tokens)
-            # Also remove old file if it exists (migration)
-            if os.path.exists(TOKENS_FILE):
-                os.remove(TOKENS_FILE)
-            return
-        except Exception as e:
-            print(f"Biometric storage failed, using file: {e}")
-
-    # File-based fallback
     ensure_config_dir()
     with open(TOKENS_FILE, "w") as f:
         json.dump(tokens, f, indent=2)
 
 
 def clear_tokens():
-    """Clear stored tokens from both biometric and file storage."""
-    # Clear biometric storage
-    if _use_biometric_storage():
-        try:
-            from biometric_keychain import clear_tokens_biometric
-            clear_tokens_biometric()
-        except Exception:
-            pass
-
-    # Clear file storage
+    """Clear stored tokens."""
     if os.path.exists(TOKENS_FILE):
         os.remove(TOKENS_FILE)
 
 
 def clear_all():
-    """Clear all stored data from both biometric and file storage."""
-    # Clear biometric storage
-    if _use_biometric_storage():
-        try:
-            from biometric_keychain import clear_all_biometric
-            clear_all_biometric()
-        except Exception:
-            pass
-
-    # Clear file storage
+    """Clear all stored data."""
     for f in [CLIENT_INFO_FILE, TOKENS_FILE]:
         if os.path.exists(f):
             os.remove(f)
@@ -363,14 +259,6 @@ def clear_all():
 
 def get_storage_type() -> str:
     """Return the current storage type being used."""
-    if _use_biometric_storage():
-        try:
-            from biometric_keychain import is_biometric_protection_active
-            if is_biometric_protection_active():
-                return "keychain (Touch ID / Face ID protected)"
-            return "keychain (macOS Keychain)"
-        except Exception:
-            return "keychain (macOS Keychain)"
     return "file"
 
 

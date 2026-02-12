@@ -4,8 +4,6 @@
 #   "httpx>=0.27",
 #   "keyring>=25.0",
 #   "pyyaml>=6.0",
-#   "pyobjc-framework-Security>=10.0; sys_platform == 'darwin'",
-#   "pyobjc-framework-LocalAuthentication>=10.0; sys_platform == 'darwin'",
 # ]
 # requires-python = ">=3.12"
 # ///
@@ -19,8 +17,7 @@ Commands:
     logout      - Clear stored tokens
 
 Token storage:
-    On macOS: Uses Touch ID / Face ID protected Keychain (biometric)
-    On other systems: Uses file-based storage with fallback
+    Uses cross-platform keyring for credentials, file-based for OAuth tokens.
 """
 
 import argparse
@@ -47,92 +44,22 @@ from oauth import (
 SERVICE_NAME = "atlassian-claude-skill"
 
 
-def _get_generic_keychain():
-    """Get GenericKeychain instance if available on macOS.
-
-    Returns:
-        GenericKeychain instance or None if not available
-    """
-    if sys.platform != "darwin":
-        return None
-    try:
-        from biometric_keychain import get_keychain
-
-        return get_keychain()
-    except ImportError:
-        return None
-
-
 def get_stored_value(key: str) -> str | None:
-    """Get value from keychain (macOS) or keyring (other platforms).
-
-    On macOS, uses GenericKeychain which stores without application-specific
-    ACLs, avoiding repeated password prompts when running from different directories.
-    """
-    kc = _get_generic_keychain()
-    if kc:
-        return kc.get_generic(key)
+    """Get value from keyring."""
     return keyring.get_password(SERVICE_NAME, key)
 
 
 def set_stored_value(key: str, value: str) -> None:
-    """Store value in keychain (macOS) or keyring (other platforms).
-
-    On macOS, uses GenericKeychain which stores without application-specific
-    ACLs, avoiding repeated password prompts when running from different directories.
-    """
-    kc = _get_generic_keychain()
-    if kc and kc.set_generic(key, value):
-        return
+    """Store value in keyring."""
     keyring.set_password(SERVICE_NAME, key, value)
 
 
 def delete_stored_value(key: str) -> None:
-    """Delete value from keychain (macOS) or keyring (other platforms)."""
-    kc = _get_generic_keychain()
-    if kc:
-        kc.delete_generic(key)
-        return
+    """Delete value from keyring."""
     try:
         keyring.delete_password(SERVICE_NAME, key)
     except keyring.errors.PasswordDeleteError:
         pass
-
-
-def _migrate_from_keyring() -> None:
-    """Migrate credentials from keyring to generic keychain storage.
-
-    On macOS, this migrates credentials stored with application-specific ACLs
-    (which cause repeated password prompts) to the new generic keychain storage
-    (which is accessible by any process running as the current user).
-    """
-    kc = _get_generic_keychain()
-    if not kc:
-        return
-
-    keys_to_migrate = [
-        "auth_type",
-        "api_email",
-        "api_token",
-        "site_url",
-        "site_name",
-        "cloud_id",
-    ]
-    for key in keys_to_migrate:
-        # Check if already in new storage
-        if kc.get_generic(key):
-            continue
-        # Try to get from old keyring
-        try:
-            old_value = keyring.get_password(SERVICE_NAME, key)
-        except Exception:
-            continue
-        if old_value:
-            kc.set_generic(key, old_value)
-            try:
-                keyring.delete_password(SERVICE_NAME, key)
-            except Exception:
-                pass
 
 
 def cmd_login(args):
@@ -243,9 +170,6 @@ def cmd_login(args):
     set_stored_value("site_name", selected["name"])
     set_stored_value("site_url", selected["url"])
 
-    # Migrate any existing credentials from old keyring storage to new generic keychain
-    _migrate_from_keyring()
-
     yaml.dump(
         {
             "status": "success",
@@ -331,9 +255,6 @@ def cmd_setup_token(args):
     set_stored_value(
         "site_name", site_url.replace("https://", "").replace(".atlassian.net", "")
     )
-
-    # Migrate any existing credentials from old keyring storage to new generic keychain
-    _migrate_from_keyring()
 
     yaml.dump(
         {

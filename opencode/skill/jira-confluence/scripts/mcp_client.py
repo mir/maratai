@@ -4,8 +4,6 @@
 #   "httpx>=0.27",
 #   "httpx-sse>=0.4",
 #   "pyyaml>=6.0",
-#   "pyobjc-framework-Security>=10.0; sys_platform == 'darwin'",
-#   "pyobjc-framework-LocalAuthentication>=10.0; sys_platform == 'darwin'",
 # ]
 # requires-python = ">=3.12"
 # ///
