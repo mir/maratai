@@ -1,6 +1,6 @@
 {
   "name": "maratai-dev",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "AI-powered development workflow automation with specialized agents for project search, code review, specification creation, and web research. Includes smart commit commands and feature preparation tools.",
   "author": {
     "name": "marat.yuldashev"

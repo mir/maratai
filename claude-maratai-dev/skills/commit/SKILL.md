@@ -14,3 +14,4 @@ disable-model-invocation: true
 6. Push the new branch
 7. Review all the changes made in this branch (not only latest commit)
 8. Create a proposal to the user to do a short concise merge request using the glab utility, describing all the changes made in the branch.
+9. If $ARGUMENTS mentions "mr" then create an mr. If "$ARGUMETNS" mention automatic merge, then create MR with squash and automatic merge options.
