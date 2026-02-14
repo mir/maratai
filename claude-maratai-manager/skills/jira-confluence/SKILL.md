@@ -245,3 +245,17 @@ Then add the required fields using `--field`:
 ```bash
 uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/jira.py create PROJ --type Story --summary "Title" --field "customfield_10001=5"
 ```
+
+# Workflows
+
+## jira-status-update
+
+Update ticket statuses based on recent git commits content. Matches commits to tickets by ticket IDs and drafts status update comments.
+
+workflows/jira-status-update.md
+
+## jira-cleanup
+
+Analyze active Jira tickets against the codebase to identify problems (vague descriptions, stale discussions, incorrect statuses, implemented features still open) and propose cleanup actions.
+
+workflows/jira-cleanup.md

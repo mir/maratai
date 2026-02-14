@@ -1,21 +1,4 @@
----
-description: Create implementation plan
-argument-hint: <folder-with-specs>
-allowed-tools: Grep, Bash(grep:*), Glob, Bash(glob:*), Bash(find:*), Bash(ls:*), Bash(tree:*), WebSearch, mcp__deepwiki__read_wiki_structure, mcp__deepwiki__read_wiki_contents, mcp__deepwiki__ask_question, Write(docs/*:*), Read
----
-
-# Task
-- Ask user to point to the folder or files necessary to make a plan, such as:
-  - Main idea
-  - User stories
-  - Relevant files
-  - Libraries
-  - Web links
-  - Code snippets
-  - Database tables
-  - Additional data
-- Create a single .md file with minimal implementation plan
-- Run the plan-spec-reviewer agent to review the written plan.
+Prepare a comprehensive implementation plan for the "$ARGUMENTS"
 
 # Requirements
    - Use the `- [ ]` for the tasks and subtasks

@@ -1,6 +1,3 @@
----
-description: Prepare documentation for a user defined feature
----
 Create comprehensive technical documentation that explains the complete data flow for the following feature:
 $ARGUMENTS
 

@@ -1,6 +1,3 @@
----
-description: Analyze Jira tickets for common problems and propose cleanup actions
----
 # Purpose
 You are the project manager. Over time, Jira tickets accumulate issues: vague descriptions, stale discussions, incorrect statuses, and implemented features still marked as open.
 
