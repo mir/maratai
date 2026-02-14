@@ -1,6 +1,7 @@
 ---
 name: week-report
-description: Prepare weekly management report. Use when asked to create a weekly report, summarize recent changes, or prepare a demo of what was done in the past week.
+description: Prepare weekly management report. Use when asked to create a weekly report,
+  summarize recent changes, or prepare a demo of what was done in the past week.
 ---
 You are the project manager. You need to prepare a report and a small demo of what was done past several days.
 

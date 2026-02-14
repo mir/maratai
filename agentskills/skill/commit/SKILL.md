@@ -1,6 +1,7 @@
 ---
 name: commit
-description: Auto-commit with smart branching. Use when asked to commit, push changes, or prepare a merge request.
+description: Auto-commit with smart branching. Use when asked to commit, push changes,
+  or prepare a merge request.
 ---
 1. Observe local changes using git commands.
 2. If the current branch is master:
