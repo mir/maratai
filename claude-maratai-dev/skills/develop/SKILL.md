@@ -1,7 +1,6 @@
 ---
 name: develop
 description: helps to prepare e2e plan for features implementations
-disable-model-invocation: true
 ---
 
 You are helping to prepare a plan before implementing the feature "$ARGUMENTS".
