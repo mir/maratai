@@ -9,8 +9,7 @@ re-used across tools.
 Repository Layout
 -----------------
 - `claude-maratai-dev/` (v1.0.1) – Claude Code plugin for development workflows
-  with skills for auto-commit and feature planning. Includes deepwiki MCP
-  server for GitHub repository documentation.
+  with skills for auto-commit and feature planning.
 - `claude-maratai-manager/` (v1.26.0) – Claude Code plugin for management
   workflows with Atlassian integration (Jira & Confluence), Google Docs/Sheets
   export, and weekly reporting tools.
@@ -81,12 +80,6 @@ Skill Reference (maratai-manager)
   Markdown. Uses Google APIs with read-only scopes. Prefers gcloud ADC
   authentication with browser OAuth fallback. Useful for ingesting Google
   Workspace content for summarization or analysis.
-
-MCP Server Reference (maratai-dev)
-----------------------------------
-- **`deepwiki`** – Remote MCP server for querying GitHub repository documentation
-  via DeepWiki. Provides tools for reading wiki structure, viewing content, and
-  asking questions about repositories. Connects to `https://mcp.deepwiki.com/sse`.
 
 Claude Code Plugins
 -------------------

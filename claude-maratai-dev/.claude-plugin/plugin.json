@@ -5,10 +5,5 @@
   "author": {
     "name": "marat.yuldashev"
   },
-  "mcpServers": {
-    "deepwiki": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://mcp.deepwiki.com/sse"]
-    }
-  }
+  "mcpServers": {}
 }
