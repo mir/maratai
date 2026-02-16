@@ -1,0 +1,8 @@
+{
+  "name": "maratai-data",
+  "version": "1.0.0",
+  "description": "Data analytics workflows with PostgreSQL querying via psql CLI.",
+  "author": {
+    "name": "marat.yuldashev"
+  }
+}

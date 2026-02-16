@@ -13,6 +13,11 @@
       "name": "maratai-manager",
       "source": "./claude-maratai-manager",
       "description": "Management workflow automation with Atlassian integration (Jira & Confluence) and weekly reporting tools"
+    },
+    {
+      "name": "maratai-data",
+      "source": "./claude-maratai-data",
+      "description": "Data analytics workflows with PostgreSQL querying via psql CLI"
     }
   ]
 }

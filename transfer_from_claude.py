@@ -10,6 +10,7 @@ Transfer skills from Claude Code plugin folders to Agent Skills format.
 Source directories:
 - claude-maratai-dev/skills/<name>/ -> agentskills/skill/<name>/
 - claude-maratai-manager/skills/<name>/ -> agentskills/skill/<name>/
+- claude-maratai-data/skills/<name>/ -> agentskills/skill/<name>/
 
 Transformations:
 - SKILL.md frontmatter is rewritten with compliant name/description
@@ -94,7 +95,7 @@ def get_skill_sources(project_root: Path) -> list[tuple[Path, str]]:
     """
     skills = []
 
-    for plugin_dir in ['claude-maratai-dev', 'claude-maratai-manager']:
+    for plugin_dir in ['claude-maratai-dev', 'claude-maratai-manager', 'claude-maratai-data']:
         skills_dir = project_root / plugin_dir / 'skills'
         if not skills_dir.exists():
             continue
