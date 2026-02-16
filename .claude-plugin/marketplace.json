@@ -17,7 +17,7 @@
     {
       "name": "maratai-data",
       "source": "./claude-maratai-data",
-      "description": "Data analytics workflows with PostgreSQL querying via psql CLI"
+      "description": "Data analytics workflows with database"
     }
   ]
 }
