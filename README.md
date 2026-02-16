@@ -14,7 +14,8 @@ Repository Layout
   workflows with Atlassian integration (Jira & Confluence), Google Docs/Sheets
   export, and weekly reporting tools.
 - `claude-maratai-data/` – Claude Code plugin for data analytics
-  workflows with PostgreSQL querying via psql CLI.
+  workflows with database querying via command-line clients (psql,
+  mysql, clickhouse-client, bq, snowsql, etc.).
 - `agentskills/` – Canonical Agent Skills (SKILL.md files) following the
   open [Agent Skills standard](https://agentskills.io). Deployable to any
   compatible CLI tool.
@@ -104,10 +105,12 @@ Skill Reference (maratai-manager)
 
 Skill Reference (maratai-data)
 -------------------------------
-- **`skills/psql/`** – PostgreSQL analytics via psql CLI. Explores schemas,
+- **`skills/data-analyst/`** – Database analytics via command-line clients
+  (psql, mysql, clickhouse-client, bq, snowsql, etc.). Explores schemas,
   runs analytical SQL queries, formats results as markdown tables, and follows
   best practices (CTEs, LIMIT, EXPLAIN ANALYZE, date functions). Connection
-  managed via standard `PG*` environment variables.
+  managed via `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USER`, `DB_PASSWORD`
+  environment variables.
 
 Claude Code Plugins
 -------------------
@@ -123,7 +126,7 @@ interactive mode:
    ```
    /plugin install maratai-dev@maratai    # Development workflows
    /plugin install maratai-manager@maratai # Management workflows (Atlassian)
-   /plugin install maratai-data@maratai    # Data analytics (PostgreSQL)
+   /plugin install maratai-data@maratai    # Data analytics (multi-database)
    ```
 
 3. Verify installation:
