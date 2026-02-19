@@ -76,15 +76,6 @@ Skill Reference (maratai-dev)
 - **`skills/commit/`** – auto-commit with smart branching. Captures outstanding
   changes, branches off `main` when needed, stages, commits with a concise
   message, pushes, and prompts the user to file a merge request via `glab`.
-- **`skills/develop/`** – feature development planning. Starts with a user
-  story, builds an implementation plan with local server commands, DB access,
-  UI sketches, and testing steps. Includes two workflows:
-  - **`workflows/deep-plan.md`** – comprehensive implementation planner with
-    architecture diagrams, data-flow sequences, actionable task lists, and
-    testing strategies.
-  - **`workflows/deep-explain.md`** – documentation generator for existing
-    features. Produces overview, sequence and flow diagrams, and a
-    component-by-component walkthrough with file references and state changes.
 
 Skill Reference (maratai-manager)
 ---------------------------------
