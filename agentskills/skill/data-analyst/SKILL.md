@@ -1,6 +1,7 @@
 ---
 name: data-analyst
-description: Data analysis master. Use when asked to query a database, explore schema, analyze data, run SQL, or investigate tables.
+description: Data analysis master. Use when asked to query a database, explore schema,
+  analyze data, run SQL, or investigate tables.
 ---
 # Database Analytics Skill
 
@@ -10,7 +11,7 @@ Query databases for data analysis using command-line clients, e.g.:
 - ClickHouse: `clickhouse-client`
 - BigQuery: `bq`
 - Snowflake: `snowsql`
-or any other database.
+or any toher database.
 
 
 # Connection
@@ -37,15 +38,15 @@ Explore database structure before writing any queries.
 2. Explore which tables there are in db
 3. Using db-specific queries fetch the schema of a table
 4. If the table is small enough for each column
-fetch 10 most common distinct values.
-If the table is too large, use sampling specific to db.
+fetch 10 most common disctinct values.
+If the table is too large, use sampling specific to  db.
 
 # SQL Best Practices
 
 - Use CTEs over subqueries
 - Select specific columns, never SELECT *
 - ORDER BY <date> DESC
-- Always add `LIMIT 10` (or less) when exploring data. Only remove the limit once you understand the result set size. Otherwise prefer outputting to a file
+- Always add `LIMIT 10` (or less) when exploring data. Only remove the limit once you understand the result set size. Otherwise prefer outputing to the file
 in csv, parquet, json, or other formats
 - Use descriptive aliases, never one-symbol short abbreviations
 - Before building complex analytics, verify assumptions doing MIN/MAX/COUNT aggregations for columns
