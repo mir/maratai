@@ -93,6 +93,10 @@ Skill Reference (maratai-manager)
   Markdown. Uses Google APIs with read-only scopes. Prefers gcloud ADC
   authentication with browser OAuth fallback. Useful for ingesting Google
   Workspace content for summarization or analysis.
+- **`skills/demo-page/`** – Generate a polished, self-contained HTML demo page
+  from any source material (feature descriptions, ticket lists, release notes,
+  or free-form conversation). Tells a narrative story about real user problems
+  being solved rather than a plain changelog.
 
 Skill Reference (maratai-data)
 -------------------------------
