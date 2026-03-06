@@ -30,6 +30,24 @@ Every section starts from a **user problem**, not a feature name:
 
 ---
 
+## Depth check
+
+Before writing headings and leads, verify you can answer: "What was the user doing before this feature, and why was it frustrating?"
+
+If you can only describe the feature mechanically, you don't understand the pain yet. Go back to the input material or ask the user.
+
+**Shallow vs deep:**
+
+| Shallow (just describes UI) | Deep (describes workflow gap) |
+|---|---|
+| "Filter tables by ownership" | "Analysts had no way to monitor conversations touching their tables" |
+| "New skill sharing dialog" | "Teams built the same skills independently because there was no way to share" |
+| "Mobile responsive layout" | "Checking quick stats on the go meant pinching and scrolling a desktop layout" |
+
+The deep version reveals the *frustration* — use that to write your heading and lead.
+
+---
+
 ## The problem → solution frame
 
 Each section follows this mental structure (don't make these literal headings — weave them into heading + lead):

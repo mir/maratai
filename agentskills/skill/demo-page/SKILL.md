@@ -32,6 +32,21 @@ From the provided material, separate two buckets:
 - **Demo sections** — user-facing features, improvements, or changes that deserve a visual section with screenshots and narrative. These become demo sections on the page.
 - **Summary items** — bug fixes, refactors, infrastructure changes, minor tweaks. These go into the closing summary as bullet points.
 
+### Understand the why
+
+Before moving to Phase 2, make sure you understand *why* each demo section matters — not just what was built.
+
+For each demo section candidate, write down:
+- **Who benefits** — which user role or persona gains from this?
+- **What was painful before** — what was slow, impossible, or frustrating without this feature?
+- **What changes in their workflow** — what can they do now that they couldn't, or what steps disappear?
+
+If the input material only describes *what* was built (not *why*), ask the user one focused question:
+
+> For each feature, what user problem does it solve?
+
+This is the only question worth blocking on. Do NOT proceed to variant proposals with surface-level understanding — if you can only describe the feature mechanically ("users can now filter by X"), you don't understand the pain yet.
+
 ### Infer metadata
 
 From the context, infer:
@@ -50,8 +65,13 @@ This is the core of the skill. **Propose, don't interrogate.**
 ### Process
 
 1. Read [references/storytelling.md](references/storytelling.md) for the full writing guide
-2. Analyze the input material
+2. Analyze the input material using the "Understand the why" insights from Phase 1
 3. Propose **3 variants** as compact outlines
+
+**Quality gates for variants:**
+- Each variant's demo scenario must reference the **specific user pain** from Phase 1, not just describe the UI flow
+- Headings must pass the "colleague test": would a daily user say this to a coworker? If not, rewrite
+- If you can't articulate the pain clearly for a section, that section isn't ready — flag it to the user rather than proposing a generic heading
 
 ### The 3 variants
 
@@ -89,10 +109,30 @@ Present all three variants. The user picks one, mixes elements, or gives directi
 ## Phase 3: Gather Images
 
 Three sources — infer from context which applies, don't ask:
-- create them youself using a browser
+- create them yourself using a browser
 - find images in the project
 - create images, diagrams, and charts using js/python
 - ask user to provide pics
+
+### Before taking screenshots
+
+- Collapse sidebars and dismiss banners/tooltips to remove visual noise
+- Navigate to the exact state that shows the feature (don't rely on default page load)
+- For scrollable containers, use JS eval to scroll to the relevant content
+- If a feature requires elevated permissions to screenshot, note it and handle (e.g., temporarily grant access, then revert)
+
+### After taking each screenshot
+
+- Review for distracting elements: chat history text, "Assigned to nobody", unrelated data, excessive whitespace
+- Crop with ImageMagick (`magick input.png -crop WxH+X+Y +repage output.png`) to remove irrelevant areas
+- Verify the cropped image still tells the story of that section
+
+### Screenshot checklist (per image)
+
+- [ ] Sidebar collapsed or irrelevant content hidden
+- [ ] No distracting text visible (personal messages, debug data)
+- [ ] Image focuses on the feature being demonstrated
+- [ ] No excessive whitespace
 
 ---
 
@@ -127,6 +167,15 @@ Write to `docs/demo-YYYY-MM-DD.html` (default, date = today) or user-specified p
 2. Confirm each referenced image file exists in `docs/demo-screenshots/`
 3. Note any remote image URLs (these won't be verified)
 4. Tell the user: "Open `docs/demo-YYYY-MM-DD.html` in a browser to review."
+
+### Visual Review
+
+After generating the HTML, open it in the browser and review each section:
+
+1. **Screenshot-heading alignment** — Does each screenshot support its heading and lead text? If a screenshot feels disconnected from the narrative, flag it.
+2. **Sparse sections** — Are there text-only sections that look visually empty? If so, either add a screenshot or use a callout box to fill the visual gap.
+3. **Flow check** — Do transitions read naturally when scrolling top-to-bottom? Read the heading-transition-heading sequence aloud.
+4. **Layout alternation** — Verify no two identical layout patterns appear in a row (no A-A or B-B).
 
 ## Closing section
 

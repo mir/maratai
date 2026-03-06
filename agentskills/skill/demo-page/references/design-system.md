@@ -588,6 +588,36 @@ Choose a layout for each section:
 
 ---
 
+## Sections Without Screenshots
+
+If a section has no screenshots available:
+
+- Use **Pattern C (Narrative)** with a callout box as the primary visual element
+- The callout box should contain a **concrete example or key insight**, not repeat the lead text. Good callout content: a specific before/after scenario, a quote, or a key metric
+- Consider adding a simple diagram (mermaid rendered to SVG, or inline SVG) as a visual anchor
+- Never leave a section with only heading + lead + empty space — it looks unfinished and breaks the visual rhythm
+
+**Example — section without screenshots:**
+```html
+<section class="layout-narrative accent-teal">
+  <div class="narrative-inner">
+    <div class="section-header" data-animate>
+      <div class="section-label">03 / WORKFLOW</div>
+      <h2 class="section-heading">No More Copy-Paste Reports</h2>
+      <p class="section-lead">Weekly reports used to mean an hour of copying numbers between tabs. Now they run themselves.</p>
+    </div>
+    <div class="narrative-screenshots">
+      <div class="callout-box accent-teal">
+        <strong>Before:</strong> Export CSV from dashboard → paste into spreadsheet → format → email to team (45 min/week)<br>
+        <strong>After:</strong> Schedule once → report lands in Slack every Monday at 9am (0 min/week)
+      </div>
+    </div>
+  </div>
+</section>
+```
+
+---
+
 ## Screen Sharing Design Notes
 
 These decisions were made specifically because the page is presented via Zoom/Google Meet:
