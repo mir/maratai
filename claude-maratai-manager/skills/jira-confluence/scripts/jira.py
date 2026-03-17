@@ -2,7 +2,6 @@
 # /// script
 # dependencies = [
 #   "httpx>=0.27",
-#   "httpx-sse>=0.4",
 #   "keyring>=25.0",
 #   "pyyaml>=6.0",
 # ]
@@ -1189,7 +1188,7 @@ def cmd_export(args):
 def cmd_rovo(args):
     """Search Jira issues using Rovo Search (filters out Confluence results)."""
     with mcp_client_context() as client:
-        result = client.call_tool("search", {"query": args.query})
+        result = client.call_tool("searchAtlassian", {"query": args.query})
         data, error_msg = parse_mcp_result(result)
         if error_msg:
             error_output(error_msg)

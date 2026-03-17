@@ -2,7 +2,6 @@
 # /// script
 # dependencies = [
 #   "httpx>=0.27",
-#   "httpx-sse>=0.4",
 #   "pyyaml>=6.0",
 # ]
 # requires-python = ">=3.12"
@@ -10,8 +9,9 @@
 """
 Python MCP client for Atlassian MCP server.
 
-This module implements the Model Context Protocol (MCP) to communicate
-with mcp.atlassian.com using Streamable HTTP transport.
+Implements MCP protocol over Streamable HTTP transport (POST /v1/mcp).
+Session ID is obtained from the Mcp-Session-Id response header during
+initialization and included in all subsequent requests.
 
 Usage:
     # List available tools
@@ -24,8 +24,6 @@ Usage:
 import argparse
 import json
 import sys
-import threading
-import time
 from typing import Any
 
 import httpx
@@ -58,18 +56,11 @@ class AtlassianMCPClient:
     Python client for Atlassian MCP server.
 
     Implements MCP protocol over Streamable HTTP transport.
-    The server requires:
-    1. GET /v1/sse to establish SSE connection and receive session ID
-    2. POST /v1/sse with Mcp-Session-Id header to send messages
+    All requests are POSTed to MCP_URL. Session ID is obtained from
+    the Mcp-Session-Id response header during initialization.
     """
 
     def __init__(self, token: str | None = None):
-        """
-        Initialize MCP client.
-
-        Args:
-            token: OAuth access token. If None, reads from our OAuth storage.
-        """
         if token:
             self.token = token
         else:
@@ -81,12 +72,8 @@ class AtlassianMCPClient:
                 )
 
         self.session_id: str | None = None
-        self._session_url: str | None = None
         self.request_id = 0
         self._initialized = False
-        self._responses: dict[int, dict] = {}
-        self._sse_thread: threading.Thread | None = None
-        self._stop_sse = threading.Event()
 
     def _next_id(self) -> int:
         """Get next request ID."""
@@ -104,172 +91,38 @@ class AtlassianMCPClient:
             headers["Mcp-Session-Id"] = self.session_id
         return headers
 
-    def _start_sse_listener(self):
-        """Start background thread to listen for SSE events."""
+    def _post(self, payload: dict, timeout: float = 30.0) -> dict:
+        """Send POST to MCP_URL and return parsed JSON-RPC result."""
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(MCP_URL, json=payload, headers=self._get_headers())
 
-        def listen():
-            try:
-                with httpx.Client(timeout=None) as client:
-                    headers = self._get_headers()
-                    headers["Accept"] = "text/event-stream"
+        # Capture session ID from response header
+        if "Mcp-Session-Id" in response.headers:
+            self.session_id = response.headers["Mcp-Session-Id"]
 
-                    # Use the session URL if we have one
-                    url = self._session_url or MCP_URL
-
-                    with client.stream(
-                        "GET",
-                        url,
-                        headers=headers,
-                    ) as response:
-                        current_event = None
-                        # Read SSE events
-                        for line in response.iter_lines():
-                            if self._stop_sse.is_set():
-                                break
-
-                            # Parse SSE format
-                            if line.startswith("event:"):
-                                current_event = line[6:].strip()
-                            elif line.startswith("data:"):
-                                data = line[5:].strip()
-                                if data:
-                                    # Handle endpoint event (contains session URL)
-                                    if current_event == "endpoint":
-                                        # data is like: /v1/sse?sessionId=XXX
-                                        if "sessionId=" in data:
-                                            session_id = data.split("sessionId=")[
-                                                1
-                                            ].split("&")[0]
-                                            self.session_id = session_id
-                                            self._session_url = (
-                                                f"https://mcp.atlassian.com{data}"
-                                            )
-                                    else:
-                                        # Try to parse as JSON-RPC response
-                                        try:
-                                            msg = json.loads(data)
-                                            if "id" in msg:
-                                                self._responses[msg["id"]] = msg
-                                        except json.JSONDecodeError:
-                                            pass
-                            elif line == "":
-                                current_event = None
-            except Exception as e:
-                if not self._stop_sse.is_set():
-                    print(f"SSE listener error: {e}", file=sys.stderr)
-
-        self._sse_thread = threading.Thread(target=listen, daemon=True)
-        self._sse_thread.start()
-
-    def connect(self) -> str:
-        """
-        Establish SSE connection and get session ID.
-
-        Returns:
-            Session ID
-        """
-        # Start SSE listener in background
-        self._start_sse_listener()
-
-        # Wait for session ID
-        timeout = 10
-        start = time.time()
-        while not self.session_id and time.time() - start < timeout:
-            time.sleep(0.1)
-
-        if not self.session_id:
-            raise ProtocolError("Failed to get session ID from SSE connection")
-
-        return self.session_id
-
-    def _send_request_impl(
-        self,
-        method: str,
-        params: dict | None = None,
-        request_id: int | None = None,
-        timeout: float = 30.0,
-    ) -> dict:
-        """
-        Send JSON-RPC request to MCP server (implementation).
-
-        Args:
-            method: MCP method name (e.g., "tools/list", "tools/call")
-            params: Method parameters
-            request_id: Request ID (generated if not provided)
-            timeout: Timeout for waiting for response
-
-        Returns:
-            JSON-RPC result
-
-        Raises:
-            ProtocolError: On protocol errors
-            AuthenticationError: On auth errors
-        """
-        # Ensure we have a session
-        if not self.session_id:
-            self.connect()
-
-        if request_id is None:
-            request_id = self._next_id()
-        payload = {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": method,
-        }
-        if params:
-            payload["params"] = params
-
-        # Use session URL for POST requests
-        url = self._session_url or MCP_URL
-
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                url,
-                json=payload,
-                headers=self._get_headers(),
+        if response.status_code == 401:
+            raise AuthenticationError(
+                "Authentication failed. Run 'auth.py login' to refresh token."
             )
 
-            if response.status_code == 401:
-                raise AuthenticationError(
-                    "Authentication failed. Run 'auth.py login' to refresh token."
-                )
+        if response.status_code not in (200, 202):
+            raise ProtocolError(f"HTTP {response.status_code}: {response.text}")
 
-            if response.status_code == 404:
-                # Try reconnecting
-                self.session_id = None
-                self._session_url = None
-                self.connect()
-                url = self._session_url or MCP_URL
-                response = client.post(
-                    url,
-                    json=payload,
-                    headers=self._get_headers(),
-                )
+        content_type = response.headers.get("Content-Type", "")
 
-            if response.status_code not in (200, 202):
-                raise ProtocolError(f"HTTP {response.status_code}: {response.text}")
+        if "text/event-stream" in content_type:
+            return self._parse_sse_response(response.text, payload["id"])
 
-            content_type = response.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            result = response.json()
+            if "error" in result:
+                raise ProtocolError(f"JSON-RPC error: {result['error']}")
+            return result.get("result", {})
 
-            # Handle SSE response
-            if "text/event-stream" in content_type:
-                return self._parse_sse_response(response.text, request_id)
-
-            # Handle JSON response
-            if "application/json" in content_type:
-                result = response.json()
-                if "error" in result:
-                    raise ProtocolError(f"JSON-RPC error: {result['error']}")
-                return result.get("result", {})
-
-            # 202 Accepted - wait for response via SSE
-            if response.status_code == 202:
-                return self._wait_for_response(request_id, timeout=timeout)
-
-            raise ProtocolError(f"Unexpected content type: {content_type}")
+        raise ProtocolError(f"Unexpected content type: {content_type}")
 
     def _parse_sse_response(self, text: str, request_id: int) -> dict:
-        """Parse SSE response to extract JSON-RPC result."""
+        """Parse inline SSE response body to extract JSON-RPC result."""
         result = None
         for line in text.split("\n"):
             line = line.strip()
@@ -293,37 +146,80 @@ class AtlassianMCPClient:
 
         return result
 
-    def _wait_for_response(self, request_id: int, timeout: float = 30.0) -> dict:
-        """Wait for response to arrive via SSE."""
-        start = time.time()
-        while time.time() - start < timeout:
-            if request_id in self._responses:
-                msg = self._responses.pop(request_id)
-                if "result" in msg:
-                    return msg["result"]
-                elif "error" in msg:
-                    raise ProtocolError(f"JSON-RPC error: {msg['error']}")
-            time.sleep(0.1)
-        raise ProtocolError(f"Timeout waiting for response to request {request_id}")
+    def connect(self) -> str | None:
+        """Initialize MCP session. Returns session ID."""
+        self.initialize()
+        return self.session_id
+
+    def initialize(self) -> dict:
+        """
+        Send MCP initialize request and capture session ID from response header.
+
+        Returns:
+            Server capabilities
+        """
+        params = {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {
+                "name": "atlassian-skill-python",
+                "version": "1.0.0",
+            },
+        }
+        req_id = self._next_id()
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "initialize",
+            "params": params,
+        }
+        result = self._post(payload, timeout=10.0)
+        self._initialized = True
+
+        # Send initialized notification
+        try:
+            notif = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+            with httpx.Client(timeout=5.0) as client:
+                client.post(MCP_URL, json=notif, headers=self._get_headers())
+        except Exception:
+            pass  # Notification may not be required
+
+        return result
+
+    def _send_request_impl(
+        self,
+        method: str,
+        params: dict | None = None,
+        request_id: int | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
+        """Send JSON-RPC request to MCP server."""
+        if not self._initialized:
+            self.initialize()
+
+        if request_id is None:
+            request_id = self._next_id()
+        payload = {"jsonrpc": "2.0", "id": request_id, "method": method}
+        if params:
+            payload["params"] = params
+
+        return self._post(payload, timeout=timeout)
 
     def _send_request_with_retry(self, method: str, params: dict | None = None) -> dict:
         """
         Send request with automatic retry on timeout.
 
         First attempt: 2 second timeout (fast fail for connection issues)
-        On timeout: Check auth, reconnect, retry with 20 second timeout
+        On timeout: Check auth, reinitialize, retry with 20 second timeout
         """
-        # First attempt with short timeout
         try:
             return self._send_request_impl(method, params, timeout=2.0)
         except ProtocolError as e:
             if "Timeout" not in str(e):
                 raise  # Re-raise non-timeout errors
 
-            # Timeout occurred - try to recover
             print("Connection timeout, reconnecting...", file=sys.stderr)
 
-            # Check auth status
             try:
                 self.token = get_valid_token()
             except AuthenticationError:
@@ -331,17 +227,10 @@ class AtlassianMCPClient:
                     "Authentication expired during retry. Run 'auth.py login'"
                 )
 
-            # Reset connection state and reconnect
-            self.close()
             self.session_id = None
-            self._session_url = None
             self._initialized = False
-            self._responses = {}
-
-            # Reinitialize
             self.initialize()
 
-            # Retry with longer timeout
             try:
                 return self._send_request_impl(method, params, timeout=20.0)
             except ProtocolError as retry_error:
@@ -358,68 +247,13 @@ class AtlassianMCPClient:
         return self._send_request_with_retry(method, params)
 
     def close(self):
-        """Close the SSE connection."""
-        self._stop_sse.set()
-        if self._sse_thread:
-            self._sse_thread.join(timeout=2)
-
-    def initialize(self) -> dict:
-        """
-        Send MCP initialize request.
-
-        Returns:
-            Server capabilities
-        """
-        params = {
-            "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {
-                "name": "atlassian-skill-python",
-                "version": "1.0.0",
-            },
-        }
-        result = self._send_request("initialize", params)
-        self._initialized = True
-
-        # Send initialized notification
-        try:
-            self._send_notification("notifications/initialized", {})
-        except Exception:
-            pass  # Notification may not be required
-
-        return result
-
-    def _send_notification(self, method: str, params: dict | None = None):
-        """Send a notification (no response expected)."""
-        if not self.session_id:
-            self.connect()
-
-        payload = {
-            "jsonrpc": "2.0",
-            "method": method,
-        }
-        if params:
-            payload["params"] = params
-
-        url = self._session_url or MCP_URL
-
-        with httpx.Client(timeout=30.0) as client:
-            client.post(
-                url,
-                json=payload,
-                headers=self._get_headers(),
-            )
+        """No-op: Streamable HTTP has no persistent connection to close."""
+        pass
 
     def list_tools(self) -> list[dict]:
-        """
-        List available tools on the MCP server.
-
-        Returns:
-            List of tool definitions
-        """
+        """List available tools on the MCP server."""
         if not self._initialized:
             self.initialize()
-
         result = self._send_request("tools/list")
         return result.get("tools", [])
 
@@ -440,20 +274,12 @@ class AtlassianMCPClient:
         if not self._initialized:
             self.initialize()
 
-        params = {"name": name}
-        # Always include arguments (even if empty dict)
-        if arguments is not None:
-            params["arguments"] = arguments
-        else:
-            params["arguments"] = {}
-
+        params = {"name": name, "arguments": arguments if arguments is not None else {}}
         result = self._send_request("tools/call", params)
 
-        # Return full result if requested (for debugging pagination)
         if return_full_result:
             return result
 
-        # Extract content from result
         content = result.get("content", [])
         if content and len(content) == 1 and content[0].get("type") == "text":
             return content[0].get("text", "")
@@ -467,7 +293,6 @@ def cmd_list_tools(args):
         client = AtlassianMCPClient()
         tools = client.list_tools()
 
-        # Format output
         output = {
             "tools": [
                 {
@@ -497,7 +322,6 @@ def cmd_call_tool(args):
     try:
         client = AtlassianMCPClient()
 
-        # Parse arguments
         arguments = None
         if args.arguments:
             try:
@@ -529,12 +353,9 @@ def cmd_test(args):
         client = AtlassianMCPClient()
         print(f"Token found: {client.token[:20]}...")
 
-        print("\nConnecting to MCP server...")
-        session_id = client.connect()
-        print(f"Session ID: {session_id}")
-
-        print("\nSending initialize request...")
+        print("\nInitializing MCP session...")
         caps = client.initialize()
+        print(f"Session ID: {client.session_id}")
         print(f"Server: {caps.get('serverInfo', {})}")
         print(f"Protocol: {caps.get('protocolVersion', 'unknown')}")
 
@@ -563,19 +384,12 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-    # list-tools command
     subparsers.add_parser("list-tools", help="List available MCP tools")
 
-    # call command
     call_parser = subparsers.add_parser("call", help="Call an MCP tool")
     call_parser.add_argument("tool_name", help="Name of the tool to call")
-    call_parser.add_argument(
-        "arguments",
-        nargs="?",
-        help="Tool arguments as JSON string",
-    )
+    call_parser.add_argument("arguments", nargs="?", help="Tool arguments as JSON string")
 
-    # test command
     subparsers.add_parser("test", help="Test MCP connection")
 
     args = parser.parse_args()

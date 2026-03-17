@@ -218,6 +218,12 @@ uv run --directory ${CLAUDE_PLUGIN_ROOT}/skills/jira-confluence scripts/confluen
 
 # Troubleshooting
 
+## Credential storage
+All credentials are stored in `~/.atlassian-mcp/`:
+- `tokens.json` — OAuth access/refresh tokens
+- `config.json` — site config (cloud ID, site URL, auth type)
+- `client_info.json` — OAuth client registration
+
 ## "Not authenticated" error
 Run the login command shown in Setup above.
 

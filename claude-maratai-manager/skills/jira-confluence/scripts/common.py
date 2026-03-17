@@ -1,6 +1,5 @@
 # /// script
 # dependencies = [
-#   "keyring>=25.0",
 #   "pyyaml>=6.0"
 # ]
 # requires-python = ">=3.12"
@@ -19,20 +18,15 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, TextIO, Generator, NoReturn
 
-import keyring
 import yaml
 
-# Import OAuth token handling
+# Import OAuth token handling and file-based config storage
 from oauth import (
-    load_tokens,
-    save_tokens,
-    load_client_info,
-    AtlassianMCPOAuth,
-    OAuthError,
+    get_stored_value,
+    set_stored_value,
+    delete_stored_value,
+    get_valid_token as _get_valid_token,
 )
-
-# Import configuration
-from config import SERVICE_NAME
 
 
 class AtlassianError(Exception):
@@ -65,24 +59,6 @@ class ConfigurationError(AtlassianError):
     pass
 
 
-def get_stored_value(key: str) -> str | None:
-    """Retrieve a value from Keychain."""
-    return keyring.get_password(SERVICE_NAME, key)
-
-
-def set_stored_value(key: str, value: str) -> None:
-    """Store a value in Keychain."""
-    keyring.set_password(SERVICE_NAME, key, value)
-
-
-def delete_stored_value(key: str) -> None:
-    """Delete a value from Keychain."""
-    try:
-        keyring.delete_password(SERVICE_NAME, key)
-    except keyring.errors.PasswordDeleteError:
-        pass  # Key doesn't exist
-
-
 def get_auth_type() -> str:
     """Get the configured authentication type ('basic' or 'oauth')."""
     return get_stored_value("auth_type") or "oauth"
@@ -111,46 +87,10 @@ def get_valid_token() -> str:
     Raises AuthenticationError if no valid token available.
     Only used for OAuth auth type.
     """
-    tokens = load_tokens()
-    if not tokens:
-        raise AuthenticationError(
-            "Not authenticated. Run: uv run scripts/auth.py login"
-        )
-
-    access_token = tokens.get("access_token")
-    if not access_token:
-        raise AuthenticationError(
-            "No access token found. Run: uv run scripts/auth.py login"
-        )
-
-    expires_at = tokens.get("expires_at", 0)
-
-    # Check if token is expired or expiring within 5 minutes
-    if time.time() > expires_at - 300:
-        # Try to refresh
-        refresh_token = tokens.get("refresh_token")
-        if not refresh_token:
-            raise AuthenticationError(
-                "Token expired and no refresh token. Run: uv run scripts/auth.py login"
-            )
-
-        client_info = load_client_info()
-        if not client_info:
-            raise AuthenticationError(
-                "No client info. Run: uv run scripts/auth.py login"
-            )
-
-        oauth = AtlassianMCPOAuth()
-        try:
-            new_tokens = oauth.refresh_tokens(refresh_token, client_info["client_id"])
-            save_tokens(new_tokens)
-            access_token = new_tokens["access_token"]
-        except OAuthError as e:
-            raise AuthenticationError(
-                f"Token refresh failed: {e}. Run: uv run scripts/auth.py login"
-            )
-
-    return access_token
+    try:
+        return _get_valid_token()
+    except Exception as e:
+        raise AuthenticationError(str(e))
 
 
 def get_cloud_id() -> str:
@@ -228,7 +168,7 @@ def parse_mcp_result(result: Any) -> tuple[dict | list | None, str | None]:
                 except json.JSONDecodeError:
                     if "Failed to" in text or "Error" in text:
                         return None, text
-                    return None, f"Invalid response: {text[:100]}"
+                    continue  # Skip non-JSON content (e.g. Atlassian deprecation notices)
         else:
             # No text block found
             return None, "No text content in MCP response"

@@ -42,6 +42,7 @@ REGISTRATION_ENDPOINT = "https://cf.mcp.atlassian.com/v1/register"
 CONFIG_DIR = os.path.expanduser("~/.atlassian-mcp")
 CLIENT_INFO_FILE = os.path.join(CONFIG_DIR, "client_info.json")
 TOKENS_FILE = os.path.join(CONFIG_DIR, "tokens.json")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 # Default callback port
 DEFAULT_CALLBACK_PORT = 9876
@@ -252,7 +253,7 @@ def clear_tokens():
 
 def clear_all():
     """Clear all stored data."""
-    for f in [CLIENT_INFO_FILE, TOKENS_FILE]:
+    for f in [CLIENT_INFO_FILE, TOKENS_FILE, CONFIG_FILE]:
         if os.path.exists(f):
             os.remove(f)
 
@@ -260,6 +261,46 @@ def clear_all():
 def get_storage_type() -> str:
     """Return the current storage type being used."""
     return "file"
+
+
+# --- Config Storage (replaces keyring for non-secret config values) ---
+
+
+def _load_config() -> dict:
+    """Load config from file."""
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_config(config: dict):
+    """Save config to file."""
+    ensure_config_dir()
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+
+def get_stored_value(key: str) -> str | None:
+    """Get a config value from file storage."""
+    return _load_config().get(key)
+
+
+def set_stored_value(key: str, value: str) -> None:
+    """Store a config value in file storage."""
+    config = _load_config()
+    config[key] = value
+    _save_config(config)
+
+
+def delete_stored_value(key: str) -> None:
+    """Delete a config value from file storage."""
+    config = _load_config()
+    config.pop(key, None)
+    _save_config(config)
 
 
 # --- OAuth Client ---

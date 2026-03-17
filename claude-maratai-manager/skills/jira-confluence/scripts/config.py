@@ -4,11 +4,8 @@
 # ///
 """Configuration constants for Atlassian scripts."""
 
-# Keychain service name for credential storage
-SERVICE_NAME = "atlassian-claude-skill"
-
 # MCP server configuration
-MCP_URL = "https://mcp.atlassian.com/v1/sse"
+MCP_URL = "https://mcp.atlassian.com/v1/mcp"
 MCP_PROTOCOL_VERSION = "2025-06-18"
 
 # Timeouts in seconds

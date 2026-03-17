@@ -2,7 +2,6 @@
 # /// script
 # dependencies = [
 #   "httpx>=0.27",
-#   "keyring>=25.0",
 #   "pyyaml>=6.0",
 # ]
 # requires-python = ">=3.12"
@@ -27,10 +26,9 @@ import sys
 import time
 
 import httpx
-import keyring
 import yaml
 
-# Import OAuth client
+# Import OAuth client and file-based config storage
 from oauth import (
     AtlassianMCPOAuth,
     OAuthError,
@@ -39,27 +37,10 @@ from oauth import (
     clear_tokens,
     clear_all as clear_oauth_storage,
     get_storage_type,
+    get_stored_value,
+    set_stored_value,
+    delete_stored_value,
 )
-
-SERVICE_NAME = "atlassian-claude-skill"
-
-
-def get_stored_value(key: str) -> str | None:
-    """Get value from keyring."""
-    return keyring.get_password(SERVICE_NAME, key)
-
-
-def set_stored_value(key: str, value: str) -> None:
-    """Store value in keyring."""
-    keyring.set_password(SERVICE_NAME, key, value)
-
-
-def delete_stored_value(key: str) -> None:
-    """Delete value from keyring."""
-    try:
-        keyring.delete_password(SERVICE_NAME, key)
-    except keyring.errors.PasswordDeleteError:
-        pass
 
 
 def cmd_login(args):
