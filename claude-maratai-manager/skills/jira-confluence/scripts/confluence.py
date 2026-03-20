@@ -206,6 +206,35 @@ def search_cql_paginated(
     return all_results, total_size
 
 
+def _has_body_content(page_data: dict) -> bool:
+    """Check whether getConfluencePage returned usable body content."""
+    body = page_data.get("body", {})
+    if isinstance(body, dict):
+        return bool(
+            body.get("storage", {}).get("value")
+            or body.get("atlas_doc_format", {}).get("value")
+        )
+    return bool(body)
+
+
+def enrich_with_search_content(client, cloud_id: str, page_id: str, page_data: dict) -> dict:
+    """If page has no body content, fetch excerpt via CQL search as fallback."""
+    if _has_body_content(page_data):
+        return page_data
+
+    result = client.call_tool(
+        "searchConfluenceUsingCql",
+        {"cloudId": cloud_id, "cql": f"id={page_id}", "limit": 1},
+    )
+    data, err = parse_mcp_result(result)
+    if not err and data:
+        results = data.get("results", [])
+        if results and results[0].get("excerpt"):
+            page_data = dict(page_data)
+            page_data["_fallback_content"] = results[0]["excerpt"]
+    return page_data
+
+
 def format_page(page: dict, include_content: bool = True) -> dict:
     """Format page data for YAML output."""
     result = {
@@ -272,6 +301,8 @@ def format_page(page: dict, include_content: bool = True) -> dict:
 
         if content_value:
             result["content"] = html_to_text(content_value)
+        elif page.get("_fallback_content"):
+            result["content"] = page["_fallback_content"]
 
     return result
 
@@ -347,6 +378,7 @@ def cmd_get(args):
         if error_msg:
             error_output(error_msg)
 
+        result = enrich_with_search_content(client, cloud_id, args.page_id, result)
         yaml_output({"page": format_page(result)})
 
 
@@ -595,6 +627,9 @@ class PageProcessor:
         if isinstance(page_data, str):
             page_data = json.loads(page_data)
 
+        # Enrich with search excerpt if body is empty
+        page_data = enrich_with_search_content(self.client, self.cloud_id, page_id, page_data)
+
         # Determine parent path using parentId from API
         parent_id = page_data.get("parentId")
         parent_path = self.state.id_to_path.get(parent_id, self.output_dir)
@@ -609,7 +644,7 @@ class PageProcessor:
         title = formatted.get("title", "Untitled")
         folder_name = sanitize_filename(title, page_id)
         folder_path = os.path.join(parent_path, folder_name)
-        file_path = os.path.join(folder_path, f"index.{self.ext}")
+        file_path = os.path.join(folder_path, f"content.{self.ext}")
 
         self.state.id_to_path[page_id] = folder_path
         write_page_to_file(formatted, file_path, self.output_format)
@@ -721,6 +756,7 @@ def cmd_export(args):
                 if err:
                     print(f"Warning: Failed to fetch page {page_id}: {err}", file=sys.stderr)
                     continue
+                full_page = enrich_with_search_content(client, cloud_id, page_id, full_page)
                 formatted = format_page(full_page, include_content=True)
                 exported_pages.append(formatted)
             except Exception as e:
