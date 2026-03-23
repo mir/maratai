@@ -288,20 +288,21 @@ def format_page(page: dict, include_content: bool = True) -> dict:
     # Content - check both body.storage (v1 API) and body (v2 API)
     if include_content:
         body = page.get("body", {})
-        if isinstance(body, dict):
-            # v1 API format
+        if isinstance(body, str):
+            # contentFormat=markdown: body is already plain markdown text
+            result["content"] = body
+        elif isinstance(body, dict):
+            # v1 API format (storage/HTML)
             storage = body.get("storage", {})
             content_value = storage.get("value", "")
             # v2 API format
             if not content_value:
                 atlas_doc = body.get("atlas_doc_format", {})
                 content_value = atlas_doc.get("value", "")
-        else:
-            content_value = str(body) if body else ""
+            if content_value:
+                result["content"] = html_to_text(content_value)
 
-        if content_value:
-            result["content"] = html_to_text(content_value)
-        elif page.get("_fallback_content"):
+        if not result.get("content") and page.get("_fallback_content"):
             result["content"] = page["_fallback_content"]
 
     return result
@@ -370,7 +371,7 @@ def cmd_get(args):
             {
                 "cloudId": cloud_id,
                 "pageId": args.page_id,
-                "includeBody": True,
+                "contentFormat": "markdown",
             },
         )
 
@@ -378,7 +379,6 @@ def cmd_get(args):
         if error_msg:
             error_output(error_msg)
 
-        result = enrich_with_search_content(client, cloud_id, args.page_id, result)
         yaml_output({"page": format_page(result)})
 
 
@@ -616,7 +616,7 @@ class PageProcessor:
         page_data, err = call_mcp_with_retry(
             self.client,
             "getConfluencePage",
-            {"cloudId": self.cloud_id, "pageId": page_id, "includeBody": True},
+            {"cloudId": self.cloud_id, "pageId": page_id, "contentFormat": "markdown"},
             self.rate_limiter
         )
         if err:
@@ -750,7 +750,7 @@ def cmd_export(args):
             try:
                 full_page = client.call_tool(
                     "getConfluencePage",
-                    {"cloudId": cloud_id, "pageId": page_id, "includeBody": True},
+                    {"cloudId": cloud_id, "pageId": page_id, "contentFormat": "markdown"},
                 )
                 full_page, err = parse_mcp_result(full_page)
                 if err:

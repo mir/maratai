@@ -206,6 +206,35 @@ def search_cql_paginated(
     return all_results, total_size
 
 
+def _has_body_content(page_data: dict) -> bool:
+    """Check whether getConfluencePage returned usable body content."""
+    body = page_data.get("body", {})
+    if isinstance(body, dict):
+        return bool(
+            body.get("storage", {}).get("value")
+            or body.get("atlas_doc_format", {}).get("value")
+        )
+    return bool(body)
+
+
+def enrich_with_search_content(client, cloud_id: str, page_id: str, page_data: dict) -> dict:
+    """If page has no body content, fetch excerpt via CQL search as fallback."""
+    if _has_body_content(page_data):
+        return page_data
+
+    result = client.call_tool(
+        "searchConfluenceUsingCql",
+        {"cloudId": cloud_id, "cql": f"id={page_id}", "limit": 1},
+    )
+    data, err = parse_mcp_result(result)
+    if not err and data:
+        results = data.get("results", [])
+        if results and results[0].get("excerpt"):
+            page_data = dict(page_data)
+            page_data["_fallback_content"] = results[0]["excerpt"]
+    return page_data
+
+
 def format_page(page: dict, include_content: bool = True) -> dict:
     """Format page data for YAML output."""
     result = {
@@ -259,19 +288,22 @@ def format_page(page: dict, include_content: bool = True) -> dict:
     # Content - check both body.storage (v1 API) and body (v2 API)
     if include_content:
         body = page.get("body", {})
-        if isinstance(body, dict):
-            # v1 API format
+        if isinstance(body, str):
+            # contentFormat=markdown: body is already plain markdown text
+            result["content"] = body
+        elif isinstance(body, dict):
+            # v1 API format (storage/HTML)
             storage = body.get("storage", {})
             content_value = storage.get("value", "")
             # v2 API format
             if not content_value:
                 atlas_doc = body.get("atlas_doc_format", {})
                 content_value = atlas_doc.get("value", "")
-        else:
-            content_value = str(body) if body else ""
+            if content_value:
+                result["content"] = html_to_text(content_value)
 
-        if content_value:
-            result["content"] = html_to_text(content_value)
+        if not result.get("content") and page.get("_fallback_content"):
+            result["content"] = page["_fallback_content"]
 
     return result
 
@@ -339,7 +371,7 @@ def cmd_get(args):
             {
                 "cloudId": cloud_id,
                 "pageId": args.page_id,
-                "includeBody": True,
+                "contentFormat": "markdown",
             },
         )
 
@@ -584,7 +616,7 @@ class PageProcessor:
         page_data, err = call_mcp_with_retry(
             self.client,
             "getConfluencePage",
-            {"cloudId": self.cloud_id, "pageId": page_id, "includeBody": True},
+            {"cloudId": self.cloud_id, "pageId": page_id, "contentFormat": "markdown"},
             self.rate_limiter
         )
         if err:
@@ -594,6 +626,9 @@ class PageProcessor:
         # Parse if string
         if isinstance(page_data, str):
             page_data = json.loads(page_data)
+
+        # Enrich with search excerpt if body is empty
+        page_data = enrich_with_search_content(self.client, self.cloud_id, page_id, page_data)
 
         # Determine parent path using parentId from API
         parent_id = page_data.get("parentId")
@@ -609,7 +644,7 @@ class PageProcessor:
         title = formatted.get("title", "Untitled")
         folder_name = sanitize_filename(title, page_id)
         folder_path = os.path.join(parent_path, folder_name)
-        file_path = os.path.join(folder_path, f"index.{self.ext}")
+        file_path = os.path.join(folder_path, f"content.{self.ext}")
 
         self.state.id_to_path[page_id] = folder_path
         write_page_to_file(formatted, file_path, self.output_format)
@@ -715,12 +750,13 @@ def cmd_export(args):
             try:
                 full_page = client.call_tool(
                     "getConfluencePage",
-                    {"cloudId": cloud_id, "pageId": page_id, "includeBody": True},
+                    {"cloudId": cloud_id, "pageId": page_id, "contentFormat": "markdown"},
                 )
                 full_page, err = parse_mcp_result(full_page)
                 if err:
                     print(f"Warning: Failed to fetch page {page_id}: {err}", file=sys.stderr)
                     continue
+                full_page = enrich_with_search_content(client, cloud_id, page_id, full_page)
                 formatted = format_page(full_page, include_content=True)
                 exported_pages.append(formatted)
             except Exception as e:
